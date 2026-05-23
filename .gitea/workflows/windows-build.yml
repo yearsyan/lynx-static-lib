@@ -33,6 +33,7 @@ jobs:
           $authHeader = "Authorization: Basic $encoded"
 
           git init .
+          git remote remove origin 2>$null
           git remote add origin $repoUrl
           git -c "http.extraHeader=$authHeader" fetch --depth 1 origin $env:SHA
           git checkout --force FETCH_HEAD
@@ -79,15 +80,15 @@ jobs:
 
       - name: Configure CMake
         shell: powershell
-        run: cmake --preset windows
+        run: .\scripts\Invoke-CMake.ps1 --preset windows
 
       - name: Sync official Lynx dependencies
         shell: powershell
-        run: cmake --build --preset deps
+        run: .\scripts\Invoke-CMake.ps1 --build --preset deps
 
       - name: Build static demo
         shell: powershell
-        run: cmake --build --preset demo
+        run: .\scripts\Invoke-CMake.ps1 --build --preset demo
 
       - name: Verify static link and smoke test
         shell: powershell

@@ -13,10 +13,31 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 1
+        shell: pwsh
+        env:
+          CHECKOUT_TOKEN: ${{ github.token }}
+          GITEA_CHECKOUT_TOKEN: ${{ gitea.token }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          SHA: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $token = if ($env:CHECKOUT_TOKEN) { $env:CHECKOUT_TOKEN } else { $env:GITEA_CHECKOUT_TOKEN }
+          if (-not $token) {
+            throw 'No workflow checkout token was provided by Gitea.'
+          }
+
+          $repoUrl = "$($env:SERVER_URL)/$($env:REPOSITORY).git"
+          $encoded = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("x-access-token:$token"))
+          $authHeader = "Authorization: Basic $encoded"
+
+          git init .
+          git remote add origin $repoUrl
+          git -c "http.extraHeader=$authHeader" fetch --depth 1 origin $env:SHA
+          git checkout --force FETCH_HEAD
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - name: Check committed files
         shell: pwsh

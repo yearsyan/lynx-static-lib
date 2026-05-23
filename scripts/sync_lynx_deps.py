@@ -100,6 +100,24 @@ def apply_patch_by_file(repo_path: Path, patch: Path) -> None:
         log(f"Patch already applied file-by-file: {patch.name}")
 
 
+def normalize_official_patch_line_endings(lynx: Path) -> None:
+    patch_root = lynx / "patches"
+    if not patch_root.exists():
+        return
+
+    normalized_count = 0
+    for patch in patch_root.rglob("*.patch"):
+        content = patch.read_bytes()
+        normalized = content.replace(b"\r\n", b"\n")
+        if normalized == content:
+            continue
+        patch.write_bytes(normalized)
+        normalized_count += 1
+
+    if normalized_count:
+        log(f"Normalized line endings for {normalized_count} official Lynx patch file(s).")
+
+
 def resolve_habitat(manifest: dict, cache_dir: Path) -> Path:
     habitat = manifest["habitat"]
     version = habitat["version"]
@@ -241,6 +259,8 @@ def main() -> int:
     expected_commit = manifest["lynx"]["commit"]
     if actual_commit != expected_commit:
         raise RuntimeError(f"Lynx submodule commit mismatch. Expected {expected_commit}, got {actual_commit}")
+
+    normalize_official_patch_line_endings(lynx)
 
     cache_dir = REPO_ROOT / "third_party" / "_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)

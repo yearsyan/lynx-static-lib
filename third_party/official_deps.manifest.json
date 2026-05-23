@@ -14,6 +14,13 @@
     "tools_shared",
     "clay"
   ],
+  "git_url_rewrites": [
+    {
+      "from": "https://github.com/ARM-software/astc-encoder.git",
+      "to": "https://chromium.googlesource.com/external/github.com/ARM-software/astc-encoder",
+      "reason": "Use the Chromium mirror for ANGLE's pinned astc-encoder dependency to avoid CI stalls on the GitHub remote."
+    }
+  ],
   "node": {
     "package_manager": "pnpm@7.33.6",
     "install_strategy": "full workspace install with --frozen-lockfile",

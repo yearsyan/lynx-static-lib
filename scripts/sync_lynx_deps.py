@@ -210,12 +210,25 @@ def install_node_workspace(manifest: dict, lynx: Path, cache_dir: Path) -> None:
         copytree_replace(hoisted_package, expected_package)
 
 
-def dependency_sync_env() -> dict[str, str]:
+def add_git_config(env: dict[str, str], key: str, value: str) -> None:
+    index = int(env.get("GIT_CONFIG_COUNT", "0"))
+    env["GIT_CONFIG_COUNT"] = str(index + 1)
+    env[f"GIT_CONFIG_KEY_{index}"] = key
+    env[f"GIT_CONFIG_VALUE_{index}"] = value
+
+
+def dependency_sync_env(manifest: dict) -> dict[str, str]:
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
     env.setdefault("GCM_INTERACTIVE", "Never")
     env.setdefault("GIT_HTTP_LOW_SPEED_LIMIT", "1024")
     env.setdefault("GIT_HTTP_LOW_SPEED_TIME", "120")
+
+    for rewrite in manifest.get("git_url_rewrites", []):
+        source = rewrite["from"]
+        destination = rewrite["to"]
+        log(f"Rewriting Git dependency URL for CI: {source} -> {destination}")
+        add_git_config(env, f"url.{destination}.insteadOf", source)
     return env
 
 
@@ -234,7 +247,7 @@ def main() -> int:
 
     hab = resolve_habitat(manifest, cache_dir)
     log(f"Using Habitat {manifest['habitat']['version']}: {hab}")
-    sync_env = dependency_sync_env()
+    sync_env = dependency_sync_env(manifest)
 
     for target in manifest["sync_targets"]:
         if target == "default":

@@ -81,6 +81,8 @@ def set_visual_studio_environment(repo_root: Path) -> dict[str, str]:
     env["vs2022_install"] = str(vs_root)
     env.setdefault("WINDOWSSDKDIR", "C:/Program Files (x86)/Windows Kits/10")
     env["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
+    # Static CI builds do not ship SDK debugger DLLs, and CI images may omit Windows Debugging Tools.
+    env["LYNXLIB_SKIP_DEBUGGER_DLLS"] = "1"
 
     python = Path(sys.executable).resolve()
     shim_dir = repo_root / "third_party" / "_cache" / "python-shim"

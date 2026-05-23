@@ -1,0 +1,13 @@
+diff --git a/build/vs_toolchain.py b/build/vs_toolchain.py
+--- a/build/vs_toolchain.py
++++ b/build/vs_toolchain.py
+@@ -413,6 +413,9 @@ def _CopyDebugger(target_dir, target_cpu):
+   dbgcore.dll is needed when using some functions from dbghelp.dll (like
+   MinidumpWriteDump).
+   """
++  if os.environ.get('LYNXLIB_SKIP_DEBUGGER_DLLS') == '1':
++    return
++
+   win_sdk_dir = SetEnvironmentAndGetSDKDir()
+   if not win_sdk_dir:
+     return

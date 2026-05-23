@@ -76,24 +76,26 @@ def visual_studio_installations() -> list[Path]:
     return installations
 
 
-def find_setup_engine(vs_root: Path) -> Path | None:
+def setup_engines(vs_root: Path) -> list[Path]:
+    engines: list[Path] = []
+
+    def add_engine(path: Path | None) -> None:
+        if path and path.exists() and path not in engines:
+            engines.append(path)
+
     for entry in vswhere_entries():
         path = Path(entry.get("installationPath", ""))
         if path.resolve() != vs_root.resolve():
             continue
-        setup = Path(entry.get("properties", {}).get("setupEngineFilePath", ""))
-        if setup.exists():
-            return setup
+        add_engine(Path(entry.get("properties", {}).get("setupEngineFilePath", "")))
 
     for root in program_files_roots():
-        candidate = root / "Microsoft Visual Studio" / "Installer" / "setup.exe"
-        if candidate.exists():
-            return candidate
+        installer_root = root / "Microsoft Visual Studio" / "Installer"
+        add_engine(installer_root / "setup.exe")
+        add_engine(installer_root / "vs_installer.exe")
 
-    installer = find_vs_installer()
-    if installer:
-        return installer
-    return None
+    add_engine(find_vs_installer())
+    return engines
 
 
 def llvm_bin(vs_root: Path) -> Path:
@@ -106,19 +108,24 @@ def has_llvm_toolchain(vs_root: Path) -> bool:
 
 
 def install_llvm_component(vs_root: Path) -> None:
-    setup = find_setup_engine(vs_root)
-    if not setup:
+    engines = setup_engines(vs_root)
+    if not engines:
         raise RuntimeError("Visual Studio Installer was not found; cannot install missing LLVM/Clang component.")
 
     log(f"Installing Visual Studio LLVM components into {vs_root}")
-    command: list[str | Path] = [setup, "modify", "--installPath", vs_root]
-    for component in LLVM_COMPONENTS:
-        command.extend(["--add", component])
-    command.extend(["--quiet", "--norestart"])
+    failures: list[str] = []
+    for setup in engines:
+        command: list[str | Path] = [setup, "modify", "--installPath", vs_root]
+        for component in LLVM_COMPONENTS:
+            command.extend(["--add", component])
+        command.extend(["--quiet", "--norestart"])
 
-    result = run(command, check=False)
-    if result.returncode not in (0, 3010):
-        raise RuntimeError(f"Visual Studio Installer failed with exit code {result.returncode}.")
+        result = run(command, check=False)
+        if result.returncode in (0, 3010):
+            return
+        failures.append(f"{setup}: exit code {result.returncode}")
+
+    raise RuntimeError("Visual Studio Installer failed:\n" + "\n".join(f"  {failure}" for failure in failures))
 
 
 def wait_for_llvm_toolchain(vs_root: Path, timeout_seconds: int = 600) -> bool:

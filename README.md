@@ -10,10 +10,15 @@ the upstream Windows GN/Ninja build.
 - `third_party/lynx`: official Lynx submodule pinned to `48546c5d0515ead65328d5f137a1d0860c06985f`
 - `scripts/sync_lynx_deps.py`: downloads pinned Habitat and runs Lynx dependency sync
 - `scripts/build_lynx.py`: runs GN/Ninja and optionally creates `lynx_static.lib`
+- `scripts/package_conan.py`: exports and optionally uploads the static package to Conan
+- `scripts/build_conan_demo.py`: installs Conan dependencies and builds the standalone demo
 - `scripts/invoke_cmake.py`: finds or downloads a pinned CMake for CI
 - `scripts/ensure_windows_toolchain.py`: validates the VS LLVM/Clang component
 - `scripts/verify_demo.py`: checks the demo static link and runs the smoke test
-- `demo/src/lynx_static_demo.cc`: Win32 demo that links the generated static library
+- `conanfile.py`: binary Conan recipe for the generated static library
+- `profiles/windows-msvc-static`: Conan profile used to export the static package
+- `demo/CMakeLists.txt`: standalone Win32 demo that consumes `lynxlib` from Conan
+- `demo/conanfile.py`: Conan consumer recipe for the standalone demo
 - `demo/bundle`: local Lynx demo page source built with the official rspeedy toolchain
 - `third_party/official_deps.manifest.json`: reproducibility manifest
 - `out/`: ignored official build output
@@ -74,38 +79,88 @@ Expected static archive:
 out/lynx/Default/lynx_static.lib
 ```
 
-Build the CMake Win32 demo. This creates a complete native window, creates a
-LynxView through the public C API, loads a sample `.lynx.bundle`, and links
-`out/lynx/Default/lynx_static.lib` as a normal COFF archive. The only forced
-root symbol is the weak N-API host initializer required by PrimJS, so the linker
-can still discard unused archive members:
+## Conan Package
+
+Export the generated static library, headers, and runtime ICU data into the
+local Conan cache. Runtime ICU data is published as a second small package so
+the static archive package stays under common private-registry upload limits:
 
 ```console
-python scripts/invoke_cmake.py --build --preset demo
+python scripts/package_conan.py --skip-build --version 0.1.1
+```
+
+Or drive the same export through CMake:
+
+```console
+python scripts/invoke_cmake.py --build --preset conan-export
+```
+
+Upload the package to the configured private remote after export:
+
+```console
+python scripts/package_conan.py --skip-build --upload --version 0.1.1 --remote neuyan
+```
+
+The CMake preset form is:
+
+```console
+python scripts/invoke_cmake.py --build --preset conan-upload
+```
+
+The default package reference is:
+
+```text
+lynxlib/0.1.1@neuyan/stable
+lynxlib-runtime/0.1.0@neuyan/stable
+```
+
+`scripts/package_conan.py` uses `profiles/windows-msvc-static`, so the exported
+binary is keyed as Windows x86_64, Release, MSVC ABI, static runtime, C++17.
+
+## Standalone Demo
+
+The demo is now a separate CMake project under `demo/`. It no longer links
+`out/lynx/Default/lynx_static.lib` directly and does not include the top-level
+source tree. It consumes `lynxlib` through Conan:
+
+```console
+cd demo
+conan install . -pr:a profiles/windows-msvc-static -r neuyan --build=missing
+cmake --preset windows-release
+cmake --build --preset windows-release
+```
+
+Run those direct commands from an x64 Visual Studio developer shell so `cl`,
+Windows SDK includes, and Windows SDK libraries are available.
+
+The repository helper performs the same steps and also makes sure the Visual
+Studio LLVM environment and Ninja are on `PATH`:
+
+```console
+python scripts/build_conan_demo.py
 ```
 
 Expected demo executable:
 
 ```text
-build/cmake-driver/Release/lynx_static_demo.exe
+demo/build/Release/lynx_static_demo.exe
 ```
 
-The default demo bundle is built from source in this repository:
+Expected compile commands database:
 
 ```text
-demo/bundle/src/index.tsx
+demo/build/Release/compile_commands.json
 ```
 
-The build uses the official Node.js and rspeedy packages synchronized under the
-Lynx submodule. `scripts/build_demo_bundle.py` creates local Windows junctions
-or POSIX symlinks from `demo/bundle/node_modules` to the pinned packages in
-`third_party/lynx/node_modules`, so the bundle build does not download or
-resolve additional packages. The generated bundle is ignored build output under:
+The demo loads its local prebuilt bundle:
 
 ```text
 demo/bundle/dist/main.lynx.bundle
-build/cmake-driver/Release/resources/demo/main.lynx.bundle
 ```
+
+To refresh that bundle from source, use `scripts/build_demo_bundle.py` while the
+official Lynx submodule dependencies are available. The standalone demo build
+itself does not require the submodule or `out/`.
 
 Build the official upstream Win32 Explorer demo separately:
 
@@ -125,9 +180,13 @@ Build all of the above:
 python scripts/invoke_cmake.py --build --preset all
 ```
 
+`all` builds the official SDK, static archive, and upstream Explorer demo. It
+does not build the standalone Conan demo.
+
 ## Git Hygiene
 
 Commit the wrapper files, `.gitmodules`, and the submodule pointer. Do not
 commit `out/`, `build/`, downloaded Habitat cache, or any generated Lynx
-dependencies. The official Lynx submodule has its own ignore rules for synced
-third-party dependencies.
+dependencies. `demo/bundle/dist/main.lynx.bundle` is the one tracked generated
+asset because the standalone demo needs a local bundle without depending on the
+top-level Lynx checkout.

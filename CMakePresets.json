@@ -34,10 +34,16 @@
       "targets": ["lynx_static_archive"]
     },
     {
-      "name": "demo",
+      "name": "conan-export",
       "configurePreset": "windows",
       "configuration": "Release",
-      "targets": ["lynx_static_demo"]
+      "targets": ["lynx_static_conan_export"]
+    },
+    {
+      "name": "conan-upload",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_static_conan_upload"]
     },
     {
       "name": "explorer",

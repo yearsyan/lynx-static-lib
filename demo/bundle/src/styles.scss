@@ -77,6 +77,29 @@
   font-weight: 800;
 }
 
+.cjkPanel {
+  display: flex;
+  flex-direction: column;
+  background-color: #ffffff;
+  border-radius: 6px;
+  margin-left: 28px;
+  margin-right: 28px;
+  padding: 22px;
+  row-gap: 10px;
+}
+
+.sectionTitle {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.sampleText {
+  color: #1f2937;
+  font-size: 17px;
+  line-height: 1.35;
+}
+
 .footer {
   background-color: #111827;
   border-radius: 6px;

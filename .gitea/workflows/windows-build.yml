@@ -2,12 +2,11 @@ name: Windows build
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    tags:
+      - "*"
 
 jobs:
-  static-demo:
+  conan-static-library:
     runs-on: windows
     timeout-minutes: 240
 
@@ -19,6 +18,8 @@ jobs:
           GITEA_CHECKOUT_TOKEN: ${{ gitea.token }}
           REPOSITORY: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
           SHA: ${{ github.sha }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -37,7 +38,11 @@ jobs:
             git remote remove origin
           }
           git remote add origin $repoUrl
-          git -c "http.extraHeader=$authHeader" fetch --depth 1 origin $env:SHA
+          if ($env:REF -and $env:REF.StartsWith('refs/tags/')) {
+            git -c "http.extraHeader=$authHeader" fetch --depth 1 origin "+$($env:REF):$($env:REF)"
+          } else {
+            git -c "http.extraHeader=$authHeader" fetch --depth 1 origin $env:SHA
+          }
           git checkout --force FETCH_HEAD
           git submodule sync --recursive
           git submodule update --init --recursive
@@ -50,6 +55,28 @@ jobs:
         shell: powershell
         run: python .\scripts\ensure_windows_toolchain.py
 
+      - name: Install Conan
+        shell: powershell
+        run: python -m pip install --upgrade pip conan
+
+      - name: Configure Conan remote
+        shell: powershell
+        env:
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+          CONAN_USERNAME: ${{ secrets.CONAN_USERNAME }}
+          CONAN_PASSWORD: ${{ secrets.CONAN_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          conan --version
+
+          if ($env:CONAN_REMOTE_URL) {
+            conan remote add neuyan $env:CONAN_REMOTE_URL --force
+          }
+
+          if ($env:CONAN_USERNAME -and $env:CONAN_PASSWORD) {
+            conan remote login neuyan $env:CONAN_USERNAME -p $env:CONAN_PASSWORD
+          }
+
       - name: Configure CMake
         shell: powershell
         run: python .\scripts\invoke_cmake.py --preset windows
@@ -58,10 +85,44 @@ jobs:
         shell: powershell
         run: python .\scripts\invoke_cmake.py --build --preset deps
 
-      - name: Build static demo
+      - name: Build static library
         shell: powershell
-        run: python .\scripts\invoke_cmake.py --build --preset demo
+        run: python .\scripts\invoke_cmake.py --build --preset static
 
-      - name: Verify static link and smoke test
+      - name: Upload stripped Conan library package
         shell: powershell
-        run: python .\scripts\verify_demo.py
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tagName = $env:REF_NAME
+          if (-not $tagName -and $env:REF -and $env:REF.StartsWith('refs/tags/')) {
+            $tagName = $env:REF.Substring('refs/tags/'.Length)
+          }
+          if (-not $tagName) {
+            $tagName = (git describe --tags --exact-match).Trim()
+          }
+
+          $version = $tagName -replace '^v', ''
+          if (-not $version) {
+            throw "Could not derive Conan package version from tag '$tagName'."
+          }
+
+          $packageArgs = @(
+            '.\scripts\package_conan.py',
+            '--skip-build',
+            '--upload',
+            '--force',
+            '--library-only',
+            '--version',
+            $version,
+            '--user',
+            'neuyan',
+            '--channel',
+            'stable',
+            '--remote',
+            'neuyan'
+          )
+          python @packageArgs

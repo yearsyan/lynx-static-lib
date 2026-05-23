@@ -14,7 +14,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify the Lynx static demo executable.")
     parser.add_argument(
         "--exe",
-        default=REPO_ROOT / "build" / "cmake-driver" / "Release" / "lynx_static_demo.exe",
+        default=REPO_ROOT / "demo" / "build" / "Release" / "lynx_static_demo.exe",
         type=Path,
     )
     parser.add_argument("--smoke-seconds", default=5, type=int)

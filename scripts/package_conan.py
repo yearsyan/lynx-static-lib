@@ -12,7 +12,7 @@ from lynxlib_common import REPO_ROOT, copytree_replace, log, resolve_existing_pa
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package and optionally upload lynxlib static artifacts with Conan.")
-    parser.add_argument("--version", default="0.1.3")
+    parser.add_argument("--version", default="0.1.4")
     parser.add_argument("--user", default="neuyan")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--remote", default="neuyan")
@@ -42,6 +42,32 @@ def runtime_package_reference(args: argparse.Namespace) -> str:
     return f"lynxlib-runtime/{args.version}@{args.user}/{args.channel}"
 
 
+def find_llvm_strip() -> Path | None:
+    found = shutil.which("llvm-strip") or shutil.which("llvm-strip.exe")
+    if found:
+        return Path(found)
+
+    msvc_tool = find_msvc_tool("llvm-strip.exe", os.environ.copy())
+    if msvc_tool:
+        return msvc_tool
+
+    vs_roots = []
+    override = os.environ.get("GYP_MSVS_OVERRIDE_PATH")
+    if override:
+        vs_roots.append(Path(override))
+    for vs_base in [
+        Path("C:/Program Files/Microsoft Visual Studio/2022"),
+        Path("C:/Program Files (x86)/Microsoft Visual Studio/2022"),
+    ]:
+        vs_roots.extend(vs_base / edition for edition in ["BuildTools", "Community", "Professional", "Enterprise"])
+
+    for root in vs_roots:
+        candidate = root / "VC" / "Tools" / "Llvm" / "x64" / "bin" / "llvm-strip.exe"
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def require_artifacts(out_dir: Path, include_runtime: bool) -> None:
     required = [
         out_dir / "lynx_static.lib",
@@ -66,7 +92,7 @@ def prepare_package_artifacts(out_dir: Path, output_folder: Path, strip_debug: b
         shutil.copy2(out_dir / "icudtl.dat", package_out / "icudtl.dat")
     shutil.copy2(out_dir / "lynx_static.lib", package_out / "lynx_static.lib")
 
-    llvm_strip = find_msvc_tool("llvm-strip.exe", os.environ.copy()) or shutil.which("llvm-strip")
+    llvm_strip = find_llvm_strip()
     if not llvm_strip:
         raise RuntimeError("llvm-strip.exe was not found; rerun with --no-strip-debug to package the raw archive.")
 

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_LYNXLIB_REF = "lynxlib/0.1.3@neuyan/stable"
+DEFAULT_LYNXLIB_REF = "lynxlib/0.1.4@neuyan/stable"
 DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.1.0@neuyan/stable"
 DEFAULT_REMOTE = "neuyan"
 
@@ -222,12 +222,8 @@ def scaffold_config(project_name: str) -> dict:
             "source_dir": "bundle",
             "main": "bundle/dist/main.lynx.bundle",
             "embed_main_bundle": True,
-            "install_command": ["npm", "install", "--no-audit", "--no-fund"],
-            "build_command": [
-                "node",
-                "node_modules/@lynx-js/rspeedy/bin/rspeedy.js",
-                "build",
-            ],
+            "install_command": ["pnpm", "install"],
+            "build_command": ["pnpm", "exec", "rspeedy", "build"],
         },
         "runtime": {
             "copy_icu": True,
@@ -901,17 +897,13 @@ to the executable under `resources/main.lynx.bundle`.
 
 GITIGNORE_TEMPLATE = r"""
 /build/
+/generated/
 /bundle/node_modules/
 /bundle/dist/
 /bundle/package-lock.json
+/bundle/pnpm-lock.yaml
 /compile_commands.json
 CMakeUserPresets.json
-"""
-
-
-GENERATED_GITIGNORE_TEMPLATE = r"""
-*
-!.gitignore
 """
 
 
@@ -924,9 +916,6 @@ def template_replace(text: str, values: dict[str, str]) -> str:
 def ensure_generated_dir(project_dir: Path) -> Path:
     generated = project_dir / "generated"
     generated.mkdir(parents=True, exist_ok=True)
-    gitignore = generated / ".gitignore"
-    if not gitignore.exists():
-        write_text(gitignore, GENERATED_GITIGNORE_TEMPLATE.strip() + "\n")
     return generated
 
 
@@ -969,12 +958,12 @@ def create_project(args: argparse.Namespace) -> None:
     write_text(project_dir / "profiles" / "windows-msvc-static", PROFILE_TEMPLATE.strip() + "\n")
     write_text(project_dir / "README.md", template_replace(README_TEMPLATE, values))
     write_text(project_dir / ".gitignore", GITIGNORE_TEMPLATE.strip() + "\n")
-    ensure_generated_dir(project_dir)
 
     package_json = {
         "name": f"{package_name}-bundle",
         "private": True,
         "type": "module",
+        "packageManager": "pnpm@7.33.6",
         "scripts": {"build": "rspeedy build"},
         "dependencies": {"@lynx-js/react": "0.107.0"},
         "devDependencies": {
@@ -1023,14 +1012,10 @@ def build_bundle(project_dir: Path, config: dict, env: dict[str, str]) -> None:
 
     rspeedy = source_dir / "node_modules" / "@lynx-js" / "rspeedy" / "bin" / "rspeedy.js"
     if not rspeedy.exists():
-        install_command = bundle.get("install_command") or ["npm", "install", "--no-audit", "--no-fund"]
+        install_command = bundle.get("install_command") or ["pnpm", "install"]
         run([str(part) for part in install_command], cwd=source_dir, env=env)
 
-    build_command = bundle.get("build_command") or [
-        "node",
-        "node_modules/@lynx-js/rspeedy/bin/rspeedy.js",
-        "build",
-    ]
+    build_command = bundle.get("build_command") or ["pnpm", "exec", "rspeedy", "build"]
     run([str(part) for part in build_command], cwd=source_dir, env=env)
     if not output.exists():
         raise RuntimeError(f"Bundle build did not produce {output}")

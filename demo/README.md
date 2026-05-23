@@ -4,7 +4,7 @@
 published Conan package:
 
 ```text
-lynxlib/0.1.3@neuyan/stable
+lynxlib/0.1.4@neuyan/stable
 lynxlib-runtime/0.1.0@neuyan/stable
 ```
 

@@ -86,7 +86,7 @@ local Conan cache. Runtime ICU data is published as a second small package so
 the static archive package stays under common private-registry upload limits:
 
 ```console
-python scripts/package_conan.py --skip-build --version 0.1.3
+python scripts/package_conan.py --skip-build --version 0.1.4
 ```
 
 Or drive the same export through CMake:
@@ -98,7 +98,7 @@ python scripts/invoke_cmake.py --build --preset conan-export
 Upload the package to the configured private remote after export:
 
 ```console
-python scripts/package_conan.py --skip-build --upload --version 0.1.3 --remote neuyan
+python scripts/package_conan.py --skip-build --upload --version 0.1.4 --remote neuyan
 ```
 
 The CMake preset form is:
@@ -110,7 +110,7 @@ python scripts/invoke_cmake.py --build --preset conan-upload
 The default package reference is:
 
 ```text
-lynxlib/0.1.3@neuyan/stable
+lynxlib/0.1.4@neuyan/stable
 lynxlib-runtime/0.1.0@neuyan/stable
 ```
 

@@ -23,7 +23,7 @@ set(LYNXLIB_SYNC_SCRIPT
 set(LYNXLIB_CONAN_SCRIPT
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_conan.py")
 
-set(LYNXLIB_CONAN_VERSION "0.1.3" CACHE STRING "Conan package version for lynxlib")
+set(LYNXLIB_CONAN_VERSION "0.1.4" CACHE STRING "Conan package version for lynxlib")
 set(LYNXLIB_CONAN_USER "neuyan" CACHE STRING "Conan package user for lynxlib")
 set(LYNXLIB_CONAN_CHANNEL "stable" CACHE STRING "Conan package channel for lynxlib")
 set(LYNXLIB_CONAN_REMOTE "neuyan" CACHE STRING "Conan remote used when uploading lynxlib")

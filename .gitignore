@@ -18,3 +18,7 @@ CMakeUserPresets.json
 *.log
 *.rsp
 *.tmp
+
+# Python build script caches
+__pycache__/
+*.py[cod]

@@ -3,8 +3,10 @@ cmake_minimum_required(VERSION 3.20)
 project(lynxlib_official_sdk LANGUAGES CXX)
 
 if(NOT WIN32)
-  message(FATAL_ERROR "This Lynx embedder package currently supports Windows only.")
+  message(FATAL_ERROR "This Lynx embedder package currently builds the demo on Windows only.")
 endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 set(LYNXLIB_LYNX_ROOT
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/lynx"
@@ -14,58 +16,46 @@ set(LYNXLIB_LYNX_OUT_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/out/lynx/Default"
     CACHE PATH "GN output directory for official Lynx build artifacts")
 
-find_program(LYNXLIB_POWERSHELL pwsh)
-if(NOT LYNXLIB_POWERSHELL)
-  find_program(LYNXLIB_POWERSHELL powershell)
-endif()
-if(NOT LYNXLIB_POWERSHELL)
-  message(FATAL_ERROR "PowerShell is required to drive the official Lynx Windows build.")
-endif()
-
 set(LYNXLIB_SCRIPT
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/Build-LynxWindows.ps1")
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_lynx.py")
 set(LYNXLIB_SYNC_SCRIPT
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/Sync-LynxDeps.ps1")
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sync_lynx_deps.py")
 set(LYNXLIB_DEMO_BUNDLE_SCRIPT
-    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/Build-DemoBundle.ps1")
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_demo_bundle.py")
 
 add_custom_target(lynx_official_deps
-  COMMAND "${LYNXLIB_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-          -File "${LYNXLIB_SYNC_SCRIPT}"
-          -LynxRoot "${LYNXLIB_LYNX_ROOT}"
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SYNC_SCRIPT}"
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Synchronizing pinned official Lynx build dependencies")
 
 add_custom_target(lynx_official_sdk
-  COMMAND "${LYNXLIB_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-          -File "${LYNXLIB_SCRIPT}"
-          -Target sdk
-          -LynxRoot "${LYNXLIB_LYNX_ROOT}"
-          -OutDir "${LYNXLIB_LYNX_OUT_DIR}"
-          -SkipDeps
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
+          --target sdk
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
+          --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --skip-deps
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Building the official Lynx Windows SDK package")
 
 add_custom_target(lynx_static_archive
-  COMMAND "${LYNXLIB_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-          -File "${LYNXLIB_SCRIPT}"
-          -Target static
-          -LynxRoot "${LYNXLIB_LYNX_ROOT}"
-          -OutDir "${LYNXLIB_LYNX_OUT_DIR}"
-          -SkipDeps
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
+          --target static
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
+          --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --skip-deps
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Building official Lynx objects and archiving them as lynx_static.lib")
 
 add_custom_target(lynx_explorer_demo
-  COMMAND "${LYNXLIB_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-          -File "${LYNXLIB_SCRIPT}"
-          -Target explorer
-          -LynxRoot "${LYNXLIB_LYNX_ROOT}"
-          -OutDir "${LYNXLIB_LYNX_OUT_DIR}"
-          -SkipDeps
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
+          --target explorer
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
+          --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --skip-deps
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Building the official Windows Lynx Explorer demo")
@@ -79,10 +69,9 @@ set(LYNXLIB_DEMO_BUNDLE_SOURCE
   "${CMAKE_CURRENT_SOURCE_DIR}/demo/bundle/dist/main.lynx.bundle")
 
 add_custom_target(lynx_demo_bundle
-  COMMAND "${LYNXLIB_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-          -File "${LYNXLIB_DEMO_BUNDLE_SCRIPT}"
-          -BundleRoot "${CMAKE_CURRENT_SOURCE_DIR}/demo/bundle"
-          -LynxRoot "${LYNXLIB_LYNX_ROOT}"
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_DEMO_BUNDLE_SCRIPT}"
+          --bundle-root "${CMAKE_CURRENT_SOURCE_DIR}/demo/bundle"
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
   BYPRODUCTS "${LYNXLIB_DEMO_BUNDLE_SOURCE}"
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL

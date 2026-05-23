@@ -7,10 +7,10 @@ project. It links the generated static archive:
 out/lynx/Default/lynx_static.lib
 ```
 
-Build it through the CMake wrapper:
+Build it through the CMake wrapper from the repository root:
 
 ```powershell
-cmake --build --preset demo
+python scripts\invoke_cmake.py --build --preset demo
 ```
 
 The executable is written to:
@@ -30,12 +30,12 @@ demo/bundle/src/index.tsx
 ```
 
 The build uses the official rspeedy packages synchronized under
-`third_party/lynx/node_modules`. `scripts/Build-DemoBundle.ps1` creates
-junctions into those pinned packages instead of downloading or resolving new
-npm dependencies.
+`third_party/lynx/node_modules`. `scripts/build_demo_bundle.py` creates
+junctions or symlinks into those pinned packages instead of downloading or
+resolving new npm dependencies.
 
 The official upstream Windows Explorer target is still available separately:
 
 ```powershell
-cmake --build --preset explorer
+python scripts\invoke_cmake.py --build --preset explorer
 ```

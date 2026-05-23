@@ -64,30 +64,4 @@ jobs:
 
       - name: Verify static link and smoke test
         shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $exe = Join-Path $PWD 'build/cmake-driver/Release/lynx_static_demo.exe'
-          if (-not (Test-Path -LiteralPath $exe)) {
-            throw "Demo executable was not built: $exe"
-          }
-
-          $vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022'
-          $dumpbin = Get-ChildItem -LiteralPath $vsRoot -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $dumpbin) {
-            throw 'dumpbin.exe was not found in the Visual Studio 2022 installation.'
-          }
-
-          $dependencies = & $dumpbin.FullName /DEPENDENTS $exe
-          if ($dependencies -match 'lynx\.dll') {
-            throw "Static demo unexpectedly depends on lynx.dll.`n$dependencies"
-          }
-
-          $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
-          Start-Sleep -Seconds 5
-          if ($process.HasExited) {
-            throw "Static demo exited during smoke test with code $($process.ExitCode)."
-          }
-          Stop-Process -Id $process.Id
+        run: python .\scripts\verify_demo.py

@@ -71,8 +71,9 @@ def set_visual_studio_environment(repo_root: Path) -> dict[str, str]:
     if not vs_clang.exists() or not vs_lld.exists():
         raise RuntimeError(
             "Lynx's Windows GN toolchain requires the Visual Studio LLVM/Clang toolset.\n"
-            "Install Visual Studio component:\n"
-            "  Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang\n"
+            "Install Visual Studio components:\n"
+            "  Microsoft.VisualStudio.Component.VC.Llvm.Clang\n"
+            "  Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset\n"
             f"Expected:\n  {vs_clang}\n  {vs_lld}"
         )
 

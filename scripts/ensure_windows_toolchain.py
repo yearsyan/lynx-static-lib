@@ -4,12 +4,16 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from lynxlib_common import is_windows, log, run
 
 
-LLVM_COMPONENT = "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang"
+LLVM_COMPONENTS = [
+    "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+    "Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset",
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,15 +51,21 @@ def find_vs_installer() -> Path | None:
     return None
 
 
+def vswhere_entries() -> list[dict]:
+    vswhere = find_vswhere()
+    if not vswhere:
+        return []
+    result = run([vswhere, "-all", "-products", "*", "-format", "json"], quiet=True)
+    return json.loads(result.stdout or "[]")
+
+
 def visual_studio_installations() -> list[Path]:
     installations: list[Path] = []
-    vswhere = find_vswhere()
-    if vswhere:
-        result = run([vswhere, "-all", "-products", "*", "-format", "json"], quiet=True)
-        for entry in json.loads(result.stdout or "[]"):
-            path = Path(entry.get("installationPath", ""))
-            if path.exists():
-                installations.append(path)
+    entries = vswhere_entries()
+    for entry in entries:
+        path = Path(entry.get("installationPath", ""))
+        if path.exists():
+            installations.append(path)
 
     for root in program_files_roots():
         base = root / "Microsoft Visual Studio" / "2022"
@@ -64,6 +74,26 @@ def visual_studio_installations() -> list[Path]:
             if path.exists() and path not in installations:
                 installations.append(path)
     return installations
+
+
+def find_setup_engine(vs_root: Path) -> Path | None:
+    for entry in vswhere_entries():
+        path = Path(entry.get("installationPath", ""))
+        if path.resolve() != vs_root.resolve():
+            continue
+        setup = Path(entry.get("properties", {}).get("setupEngineFilePath", ""))
+        if setup.exists():
+            return setup
+
+    for root in program_files_roots():
+        candidate = root / "Microsoft Visual Studio" / "Installer" / "setup.exe"
+        if candidate.exists():
+            return candidate
+
+    installer = find_vs_installer()
+    if installer:
+        return installer
+    return None
 
 
 def llvm_bin(vs_root: Path) -> Path:
@@ -76,24 +106,28 @@ def has_llvm_toolchain(vs_root: Path) -> bool:
 
 
 def install_llvm_component(vs_root: Path) -> None:
-    installer = find_vs_installer()
-    if not installer:
+    setup = find_setup_engine(vs_root)
+    if not setup:
         raise RuntimeError("Visual Studio Installer was not found; cannot install missing LLVM/Clang component.")
 
-    log(f"Installing Visual Studio component {LLVM_COMPONENT} into {vs_root}")
-    run(
-        [
-            installer,
-            "modify",
-            "--installPath",
-            vs_root,
-            "--add",
-            LLVM_COMPONENT,
-            "--quiet",
-            "--norestart",
-            "--wait",
-        ]
-    )
+    log(f"Installing Visual Studio LLVM components into {vs_root}")
+    command: list[str | Path] = [setup, "modify", "--installPath", vs_root]
+    for component in LLVM_COMPONENTS:
+        command.extend(["--add", component])
+    command.extend(["--quiet", "--norestart"])
+
+    result = run(command, check=False)
+    if result.returncode not in (0, 3010):
+        raise RuntimeError(f"Visual Studio Installer failed with exit code {result.returncode}.")
+
+
+def wait_for_llvm_toolchain(vs_root: Path, timeout_seconds: int = 600) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if has_llvm_toolchain(vs_root):
+            return True
+        time.sleep(10)
+    return has_llvm_toolchain(vs_root)
 
 
 def main() -> int:
@@ -114,12 +148,12 @@ def main() -> int:
     if not args.install_missing:
         raise RuntimeError(
             "Visual Studio LLVM/Clang toolset is missing. Install component:\n"
-            f"  {LLVM_COMPONENT}"
+            + "\n".join(f"  {component}" for component in LLVM_COMPONENTS)
         )
 
     install_llvm_component(installations[0])
     for installation in visual_studio_installations():
-        if has_llvm_toolchain(installation):
+        if wait_for_llvm_toolchain(installation):
             log(f"Using Visual Studio LLVM toolchain: {llvm_bin(installation)}")
             return 0
 

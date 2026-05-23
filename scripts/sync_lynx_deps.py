@@ -210,6 +210,15 @@ def install_node_workspace(manifest: dict, lynx: Path, cache_dir: Path) -> None:
         copytree_replace(hoisted_package, expected_package)
 
 
+def dependency_sync_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GCM_INTERACTIVE", "Never")
+    env.setdefault("GIT_HTTP_LOW_SPEED_LIMIT", "1024")
+    env.setdefault("GIT_HTTP_LOW_SPEED_TIME", "120")
+    return env
+
+
 def main() -> int:
     args = parse_args()
     manifest = load_manifest()
@@ -225,14 +234,15 @@ def main() -> int:
 
     hab = resolve_habitat(manifest, cache_dir)
     log(f"Using Habitat {manifest['habitat']['version']}: {hab}")
+    sync_env = dependency_sync_env()
 
     for target in manifest["sync_targets"]:
         if target == "default":
             log("Synchronizing Lynx default dependencies...")
-            run([hab, "sync", lynx])
+            run([hab, "sync", lynx], env=sync_env)
         else:
             log(f"Synchronizing Lynx dependency target '{target}'...")
-            run([hab, "sync", lynx, "--target", target])
+            run([hab, "sync", lynx, "--target", target], env=sync_env)
 
     install_node_workspace(manifest, lynx, cache_dir)
     apply_git_patches(lynx, REPO_ROOT / "patches" / "lynx", "Lynx")

@@ -33,7 +33,9 @@ jobs:
           $authHeader = "Authorization: Basic $encoded"
 
           git init .
-          git remote remove origin 2>$null
+          if ((git remote) -contains 'origin') {
+            git remote remove origin
+          }
           git remote add origin $repoUrl
           git -c "http.extraHeader=$authHeader" fetch --depth 1 origin $env:SHA
           git checkout --force FETCH_HEAD

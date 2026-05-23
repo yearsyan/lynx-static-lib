@@ -27,8 +27,11 @@ def find_msvc_tool(tool_name: str, env: dict[str, str]) -> Path | None:
     override = env.get("GYP_MSVS_OVERRIDE_PATH")
     if override:
         vs_roots.append(Path(override))
-    vs_base = Path("C:/Program Files/Microsoft Visual Studio/2022")
-    vs_roots.extend(vs_base / edition for edition in ["BuildTools", "Community", "Professional", "Enterprise"])
+    for vs_base in [
+        Path("C:/Program Files/Microsoft Visual Studio/2022"),
+        Path("C:/Program Files (x86)/Microsoft Visual Studio/2022"),
+    ]:
+        vs_roots.extend(vs_base / edition for edition in ["BuildTools", "Community", "Professional", "Enterprise"])
 
     for root in vs_roots:
         if not root.exists():
@@ -44,11 +47,16 @@ def set_visual_studio_environment(repo_root: Path) -> dict[str, str]:
     env = os.environ.copy()
     vs_root = Path(env["GYP_MSVS_OVERRIDE_PATH"]) if env.get("GYP_MSVS_OVERRIDE_PATH") else None
     if not vs_root:
-        vs_base = Path("C:/Program Files/Microsoft Visual Studio/2022")
-        for edition in ["BuildTools", "Community", "Professional", "Enterprise"]:
-            candidate = vs_base / edition
-            if candidate.exists():
-                vs_root = candidate
+        for vs_base in [
+            Path("C:/Program Files/Microsoft Visual Studio/2022"),
+            Path("C:/Program Files (x86)/Microsoft Visual Studio/2022"),
+        ]:
+            for edition in ["BuildTools", "Community", "Professional", "Enterprise"]:
+                candidate = vs_base / edition
+                if candidate.exists():
+                    vs_root = candidate
+                    break
+            if vs_root:
                 break
 
     if not vs_root:

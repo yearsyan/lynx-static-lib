@@ -11,6 +11,7 @@ the upstream Windows GN/Ninja build.
 - `scripts/sync_lynx_deps.py`: downloads pinned Habitat and runs Lynx dependency sync
 - `scripts/build_lynx.py`: runs GN/Ninja and optionally creates `lynx_static.lib`
 - `scripts/invoke_cmake.py`: finds or downloads a pinned CMake for CI
+- `scripts/ensure_windows_toolchain.py`: validates the VS LLVM/Clang component
 - `demo/src/lynx_static_demo.cc`: Win32 demo that links the generated static library
 - `demo/bundle`: local Lynx demo page source built with the official rspeedy toolchain
 - `third_party/official_deps.manifest.json`: reproducibility manifest
@@ -39,6 +40,11 @@ Install the Visual Studio component below before building on Windows:
 ```text
 Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang
 ```
+
+The Gitea Windows workflow runs `scripts/ensure_windows_toolchain.py
+--install-missing` before configuring CMake. That uses Visual Studio Installer
+to add the same component when the runner has VS Build Tools but lacks
+`clang-cl.exe` and `lld-link.exe`.
 
 On this machine the installed toolchain is Visual Studio LLVM/Clang
 `clang version 19.1.1`, component version `17.13.35710.127`. The upstream

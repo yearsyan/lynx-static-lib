@@ -46,6 +46,10 @@ jobs:
         shell: powershell
         run: python .\scripts\check_repository.py
 
+      - name: Ensure Windows LLVM toolchain
+        shell: powershell
+        run: python .\scripts\ensure_windows_toolchain.py --install-missing
+
       - name: Configure CMake
         shell: powershell
         run: python .\scripts\invoke_cmake.py --preset windows

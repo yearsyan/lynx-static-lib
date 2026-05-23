@@ -1266,19 +1266,6 @@ def export_project(args: argparse.Namespace) -> None:
     elif not embed_bundle:
         log(f"warning: external bundle resources were not found: {resources}")
 
-    release_notes = [
-        f"{config.get('display_name') or target} {config.get('version') or '0.1.0'}",
-        f"Build type: {build_type}",
-        "",
-        "Redistribute this directory as a unit.",
-        "Do not publish files from build/<build-type>; that directory is a CMake/Conan workspace.",
-        "",
-        "Included files:",
-    ]
-    release_notes.extend(f"- {item}" for item in exported)
-    write_text(export_dir / "RELEASE.txt", "\n".join(release_notes) + "\n")
-    exported.append("RELEASE.txt")
-
     log(f"Exported project to: {export_dir}")
     for item in exported:
         log(f"  {item}")

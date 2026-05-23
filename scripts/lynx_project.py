@@ -882,8 +882,13 @@ Useful commands:
 
 ```powershell
 python path\to\lynx_project.py build .
+python path\to\lynx_project.py build . --export
 python path\to\lynx_project.py export .
 ```
+
+Publish `dist/<build-type>/`, not `build/<build-type>/`. The build directory is
+an internal CMake/Conan workspace and contains development artifacts that are
+not part of the redistributable app.
 
 Project behavior is controlled by `lynx_project.json`.
 Set `bundle.embed_main_bundle` to `true` to compile `bundle/dist/main.lynx.bundle`
@@ -903,6 +908,7 @@ GITIGNORE_TEMPLATE = r"""
 /bundle/package-lock.json
 /bundle/pnpm-lock.yaml
 /compile_commands.json
+/dist/
 CMakeUserPresets.json
 """
 
@@ -1233,6 +1239,8 @@ def export_project(args: argparse.Namespace) -> None:
     config = read_json(project_config_path(project_dir))
     build_type = args.build_type
     target = sanitize_identifier(config.get("target") or config.get("name") or "lynx_app")
+    embed_bundle = bool(config.get("bundle", {}).get("embed_main_bundle", True))
+    copy_icu = bool(config.get("runtime", {}).get("copy_icu", True))
     build_dir = project_dir / "build" / build_type
     exe = build_dir / f"{target}.exe"
     if not exe.exists():
@@ -1242,20 +1250,38 @@ def export_project(args: argparse.Namespace) -> None:
         shutil.rmtree(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(exe, export_dir / exe.name)
+    exported = [exe.name]
 
     icu = build_dir / "icudtl.dat"
-    if icu.exists():
+    if copy_icu and icu.exists():
         shutil.copy2(icu, export_dir / "icudtl.dat")
+        exported.append("icudtl.dat")
+    elif copy_icu:
+        log(f"warning: runtime ICU asset was not found: {icu}")
 
     resources = build_dir / "resources"
-    if resources.exists():
+    if not embed_bundle and resources.exists():
         shutil.copytree(resources, export_dir / "resources")
+        exported.append("resources/")
+    elif not embed_bundle:
+        log(f"warning: external bundle resources were not found: {resources}")
 
-    compile_commands = build_dir / "compile_commands.json"
-    if compile_commands.exists():
-        shutil.copy2(compile_commands, export_dir / "compile_commands.json")
+    release_notes = [
+        f"{config.get('display_name') or target} {config.get('version') or '0.1.0'}",
+        f"Build type: {build_type}",
+        "",
+        "Redistribute this directory as a unit.",
+        "Do not publish files from build/<build-type>; that directory is a CMake/Conan workspace.",
+        "",
+        "Included files:",
+    ]
+    release_notes.extend(f"- {item}" for item in exported)
+    write_text(export_dir / "RELEASE.txt", "\n".join(release_notes) + "\n")
+    exported.append("RELEASE.txt")
 
     log(f"Exported project to: {export_dir}")
+    for item in exported:
+        log(f"  {item}")
 
 
 def parse_args() -> argparse.Namespace:

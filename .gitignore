@@ -1,6 +1,7 @@
 # CMake / local build output
 /build/
 /generated/
+/dist/
 /out/
 /cmake-build-*/
 /.vs/

@@ -963,7 +963,6 @@ def create_project(args: argparse.Namespace) -> None:
         "name": f"{package_name}-bundle",
         "private": True,
         "type": "module",
-        "packageManager": "pnpm@7.33.6",
         "scripts": {"build": "rspeedy build"},
         "dependencies": {"@lynx-js/react": "0.107.0"},
         "devDependencies": {

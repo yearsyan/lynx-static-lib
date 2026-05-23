@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout
-        shell: pwsh
+        shell: powershell
         env:
           CHECKOUT_TOKEN: ${{ github.token }}
           GITEA_CHECKOUT_TOKEN: ${{ gitea.token }}
@@ -40,7 +40,7 @@ jobs:
           git submodule update --init --recursive
 
       - name: Check committed files
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $forbidden = @(
@@ -78,19 +78,19 @@ jobs:
           }
 
       - name: Configure CMake
-        shell: pwsh
+        shell: powershell
         run: cmake --preset windows
 
       - name: Sync official Lynx dependencies
-        shell: pwsh
+        shell: powershell
         run: cmake --build --preset deps
 
       - name: Build static demo
-        shell: pwsh
+        shell: powershell
         run: cmake --build --preset demo
 
       - name: Verify static link and smoke test
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $exe = Join-Path $PWD 'build/cmake-driver/Release/lynx_static_demo.exe'

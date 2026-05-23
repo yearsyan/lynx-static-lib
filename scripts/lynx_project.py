@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_LYNXLIB_REF = "lynxlib/0.1.1@neuyan/stable"
+DEFAULT_LYNXLIB_REF = "lynxlib/0.1.2@neuyan/stable"
 DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.1.0@neuyan/stable"
 DEFAULT_REMOTE = "neuyan"
 

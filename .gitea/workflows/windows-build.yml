@@ -57,7 +57,12 @@ jobs:
 
       - name: Install Conan
         shell: powershell
-        run: python -m pip install --upgrade pip conan
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --upgrade pip conan
+          $userScripts = python -c "import os, pathlib, site; print(pathlib.Path(site.USER_BASE) / ('Scripts' if os.name == 'nt' else 'bin'))"
+          $env:PATH = "$userScripts;$env:PATH"
+          conan --version
 
       - name: Configure Conan remote
         shell: powershell
@@ -67,6 +72,8 @@ jobs:
           CONAN_PASSWORD: ${{ secrets.CONAN_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $userScripts = python -c "import os, pathlib, site; print(pathlib.Path(site.USER_BASE) / ('Scripts' if os.name == 'nt' else 'bin'))"
+          $env:PATH = "$userScripts;$env:PATH"
           conan --version
 
           if ($env:CONAN_REMOTE_URL) {
@@ -96,6 +103,8 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
+          $userScripts = python -c "import os, pathlib, site; print(pathlib.Path(site.USER_BASE) / ('Scripts' if os.name == 'nt' else 'bin'))"
+          $env:PATH = "$userScripts;$env:PATH"
 
           $tagName = $env:REF_NAME
           if (-not $tagName -and $env:REF -and $env:REF.StartsWith('refs/tags/')) {

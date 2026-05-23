@@ -10,7 +10,7 @@ class LynxStaticDemoConan(ConanFile):
     settings = "os", "arch", "compiler", "build_type"
 
     def requirements(self) -> None:
-        self.requires("lynxlib/0.1.1@neuyan/stable")
+        self.requires("lynxlib/0.1.2@neuyan/stable")
         self.requires("lynxlib-runtime/0.1.0@neuyan/stable")
 
     def layout(self) -> None:

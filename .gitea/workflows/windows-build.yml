@@ -48,7 +48,7 @@ jobs:
 
       - name: Ensure Windows LLVM toolchain
         shell: powershell
-        run: python .\scripts\ensure_windows_toolchain.py --install-missing
+        run: python .\scripts\ensure_windows_toolchain.py
 
       - name: Configure CMake
         shell: powershell

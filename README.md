@@ -43,10 +43,9 @@ Microsoft.VisualStudio.Component.VC.Llvm.Clang
 Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset
 ```
 
-The Gitea Windows workflow runs `scripts/ensure_windows_toolchain.py
---install-missing` before configuring CMake. That uses Visual Studio Installer
-to add the same component when the runner has VS Build Tools but lacks
-`clang-cl.exe` and `lld-link.exe`.
+The Gitea Windows workflow runs `scripts/ensure_windows_toolchain.py` before
+configuring CMake. It only validates the runner; install the components on the
+runner image ahead of time so CI does not mutate Visual Studio during a build.
 
 On this machine the installed toolchain is Visual Studio LLVM/Clang
 `clang version 19.1.1`, component version `17.13.35710.127`. The upstream

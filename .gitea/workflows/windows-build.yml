@@ -1,0 +1,99 @@
+name: Windows build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  static-demo:
+    runs-on: windows
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Check committed files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $forbidden = @(
+            'build',
+            'out',
+            'third_party/_cache',
+            'demo/bundle/dist',
+            'demo/bundle/node_modules',
+            'demo/bundle/.rspeedy'
+          )
+
+          foreach ($path in $forbidden) {
+            $tracked = git ls-files -- $path
+            if ($tracked) {
+              throw "Generated path is tracked and must not be committed: $path"
+            }
+          }
+
+          $binaryPatterns = @(
+            ':(glob)**/*.exe',
+            ':(glob)**/*.dll',
+            ':(glob)**/*.lib',
+            ':(glob)**/*.obj',
+            ':(glob)**/*.pdb',
+            ':(glob)**/*.zip',
+            ':(glob)**/*.dat',
+            ':(glob)**/*.bundle'
+          )
+
+          foreach ($pattern in $binaryPatterns) {
+            $tracked = git ls-files -- $pattern
+            if ($tracked) {
+              throw "Binary/generated file pattern is tracked: $pattern`n$tracked"
+            }
+          }
+
+      - name: Configure CMake
+        shell: pwsh
+        run: cmake --preset windows
+
+      - name: Sync official Lynx dependencies
+        shell: pwsh
+        run: cmake --build --preset deps
+
+      - name: Build static demo
+        shell: pwsh
+        run: cmake --build --preset demo
+
+      - name: Verify static link and smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $PWD 'build/cmake-driver/Release/lynx_static_demo.exe'
+          if (-not (Test-Path -LiteralPath $exe)) {
+            throw "Demo executable was not built: $exe"
+          }
+
+          $vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022'
+          $dumpbin = Get-ChildItem -LiteralPath $vsRoot -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\dumpbin\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) {
+            throw 'dumpbin.exe was not found in the Visual Studio 2022 installation.'
+          }
+
+          $dependencies = & $dumpbin.FullName /DEPENDENTS $exe
+          if ($dependencies -match 'lynx\.dll') {
+            throw "Static demo unexpectedly depends on lynx.dll.`n$dependencies"
+          }
+
+          $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+          Start-Sleep -Seconds 5
+          if ($process.HasExited) {
+            throw "Static demo exited during smoke test with code $($process.ExitCode)."
+          }
+          Stop-Process -Id $process.Id

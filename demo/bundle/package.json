@@ -1,0 +1,18 @@
+{
+  "name": "lynxlib-demo-bundle",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@7.33.6",
+  "scripts": {
+    "build": "rspeedy build"
+  },
+  "dependencies": {
+    "@lynx-js/react": "0.107.0"
+  },
+  "devDependencies": {
+    "@lynx-js/react-rsbuild-plugin": "0.9.8",
+    "@lynx-js/rspeedy": "0.9.3",
+    "@rsbuild/plugin-sass": "1.3.1",
+    "typescript": "5.8.3"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows",
+      "displayName": "Windows official Lynx SDK driver",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolset": "ClangCL",
+      "binaryDir": "${sourceDir}/build/cmake-driver",
+      "cacheVariables": {
+        "LYNXLIB_LYNX_ROOT": "${sourceDir}/third_party/lynx",
+        "LYNXLIB_LYNX_OUT_DIR": "${sourceDir}/out/lynx/Default"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "deps",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_official_deps"]
+    },
+    {
+      "name": "sdk",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_official_sdk"]
+    },
+    {
+      "name": "static",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_static_archive"]
+    },
+    {
+      "name": "demo",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_static_demo"]
+    },
+    {
+      "name": "explorer",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_explorer_demo"]
+    },
+    {
+      "name": "all",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_all"]
+    }
+  ]
+}

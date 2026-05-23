@@ -1,0 +1,20 @@
+# CMake / local build output
+/build/
+/out/
+/cmake-build-*/
+/.vs/
+*.user
+CMakeUserPresets.json
+
+# Reproducible downloader cache. Source code lives in the Lynx submodule.
+/third_party/_cache/
+
+# Local demo bundle install/build output
+/demo/bundle/node_modules/
+/demo/bundle/dist/
+/demo/bundle/.rspeedy/
+
+# Local logs and temporary response files
+*.log
+*.rsp
+*.tmp

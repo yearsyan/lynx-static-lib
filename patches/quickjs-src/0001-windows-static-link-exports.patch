@@ -1,0 +1,69 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index b1b2770..47cc6a6 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -17,6 +17,9 @@ config("quickjs_public_config") {
+     "CONFIG_VERSION=\"2019-09-10\"",
+     "LYNX_SIMPLIFY=1",
+   ]
++  if (lynx_static_link) {
++    defines += [ "LYNX_STATIC_LINK" ]
++  }
+ 
+   if (enable_quickjs_debugger) {
+     defines += [ "ENABLE_QUICKJS_DEBUGGER=1" ]
+@@ -127,6 +130,9 @@ config("napi_public_config") {
+   defines = [
+     "PRIMJS_MIN_LOG_LEVEL=5",  # disable alog in unittests
+   ]
++  if (lynx_static_link) {
++    defines += [ "LYNX_STATIC_LINK" ]
++  }
+   if (use_primjs_napi) {
+     defines += [ "USE_PRIMJS_NAPI" ]
+   }
+diff --git a/Primjs.gni b/Primjs.gni
+index b08486a..5e6a991 100644
+--- a/Primjs.gni
++++ b/Primjs.gni
+@@ -32,6 +32,13 @@ template("primjs_source_set") {
+     }
+     public_configs += [ "//:quickjs_public_config" ]
+ 
++    if (!defined(defines)) {
++      defines = []
++    }
++    if (lynx_static_link) {
++      defines += [ "LYNX_STATIC_LINK" ]
++    }
++
+     if (defined(exclude_configs)) {
+       configs -= exclude_configs
+     }
+@@ -76,6 +83,9 @@ template("napi_source_set") {
+     if (defined(use_primjs_napi) && use_primjs_napi) {
+       defines += [ "USE_PRIMJS_NAPI" ]
+     }
++    if (lynx_static_link) {
++      defines += [ "LYNX_STATIC_LINK" ]
++    }
+ 
+     if (!defined(public_configs)) {
+       public_configs = []
+diff --git a/src/interpreter/quickjs/include/base_export.h b/src/interpreter/quickjs/include/base_export.h
+index 81216f0..e926b91 100644
+--- a/src/interpreter/quickjs/include/base_export.h
++++ b/src/interpreter/quickjs/include/base_export.h
+@@ -5,7 +5,11 @@
+ #ifndef SRC_INTERPRETER_QUICKJS_INCLUDE_BASE_EXPORT_H_
+ #define SRC_INTERPRETER_QUICKJS_INCLUDE_BASE_EXPORT_H_
+ 
+-#if defined(WIN32)
++#if defined(LYNX_STATIC_LINK)
++#define QJS_EXPORT
++#define QJS_EXPORT_FOR_DEVTOOL
++#define QJS_HIDE
++#elif defined(WIN32)
+ #define QJS_EXPORT __declspec(dllimport)
+ #define QJS_EXPORT_FOR_DEVTOOL __declspec(dllimport)
+ #define QJS_HIDE

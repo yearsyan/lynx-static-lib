@@ -78,6 +78,7 @@ def set_visual_studio_environment(repo_root: Path) -> dict[str, str]:
         )
 
     env["GYP_MSVS_OVERRIDE_PATH"] = str(vs_root)
+    env["vs2022_install"] = str(vs_root)
     env.setdefault("WINDOWSSDKDIR", "C:/Program Files (x86)/Windows Kits/10")
     env["DEPOT_TOOLS_WIN_TOOLCHAIN"] = "0"
 

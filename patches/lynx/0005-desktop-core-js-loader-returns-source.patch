@@ -1,0 +1,15 @@
+diff --git a/platform/embedder/resource/js_source_loader_desktop.cc b/platform/embedder/resource/js_source_loader_desktop.cc
+index cda3ec04d..847a44f09 100644
+--- a/platform/embedder/resource/js_source_loader_desktop.cc
++++ b/platform/embedder/resource/js_source_loader_desktop.cc
+@@ -60,7 +60,10 @@ std::string JSSourceLoaderDesktop::LoadJSSource(const std::string& path) {
+   if (ASSETS_CORE_SCHEME == path) {
+     ICoreJsLoader* loader = CoreJsLoaderManager::GetInstance()->GetLoader();
+     if (loader) {
+-      real_path = loader->GetCoreJs();
++      const char* core_js_source = loader->GetCoreJs();
++      if (core_js_source && core_js_source[0] != '\0') {
++        return std::string(core_js_source);
++      }
+     }
+   }

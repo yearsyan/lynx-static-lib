@@ -12,13 +12,14 @@ from lynxlib_common import REPO_ROOT, copytree_replace, log, resolve_existing_pa
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package and optionally upload lynxlib static artifacts with Conan.")
-    parser.add_argument("--version", default="0.2.1")
+    parser.add_argument("--version", default="0.2.2")
     parser.add_argument("--user", default="neuyan")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--remote", default="neuyan")
+    parser.add_argument("--flavor", choices=["prod", "dev"], default="prod")
     parser.add_argument("--profile", default=REPO_ROOT / "profiles" / "windows-msvc-static", type=Path)
     parser.add_argument("--lynx-root", default=REPO_ROOT / "third_party" / "lynx", type=Path)
-    parser.add_argument("--out-dir", default=REPO_ROOT / "out" / "lynx" / "Default", type=Path)
+    parser.add_argument("--out-dir", default=None, type=Path)
     parser.add_argument("--output-folder", default=REPO_ROOT / "build" / "conan-package", type=Path)
     parser.add_argument("--strip-debug", dest="strip_debug", action="store_true", default=True)
     parser.add_argument("--no-strip-debug", dest="strip_debug", action="store_false")
@@ -31,7 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.out_dir is None:
+        args.out_dir = REPO_ROOT / "out" / "lynx" / ("Dev" if args.flavor == "dev" else "Prod")
+    return args
 
 
 def package_reference(args: argparse.Namespace) -> str:
@@ -134,6 +138,8 @@ def main() -> int:
                 args.lynx_root,
                 "--out-dir",
                 out_dir,
+                "--flavor",
+                args.flavor,
                 "--skip-deps",
             ],
             cwd=REPO_ROOT,
@@ -156,27 +162,26 @@ def main() -> int:
 
     for ref, recipe_dir, name, output_folder in refs:
         log(f"Exporting Conan package: {ref}")
-        run(
-            [
-                "conan",
-                "export-pkg",
-                recipe_dir,
-                "-of",
-                output_folder,
-                "--name",
-                name,
-                "--version",
-                args.version,
-                "--user",
-                args.user,
-                "--channel",
-                args.channel,
-                "-pr:a",
-                profile,
-            ],
-            cwd=REPO_ROOT,
-            env=env,
-        )
+        export_args = [
+            "conan",
+            "export-pkg",
+            recipe_dir,
+            "-of",
+            output_folder,
+            "--name",
+            name,
+            "--version",
+            args.version,
+            "--user",
+            args.user,
+            "--channel",
+            args.channel,
+            "-pr:a",
+            profile,
+        ]
+        if name == "lynxlib":
+            export_args.extend(["-o", f"lynxlib/*:flavor={args.flavor}"])
+        run(export_args, cwd=REPO_ROOT, env=env)
 
     if args.upload:
         for ref, _, _, _ in refs:

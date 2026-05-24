@@ -10,7 +10,8 @@
       "binaryDir": "${sourceDir}/build/cmake-driver",
       "cacheVariables": {
         "LYNXLIB_LYNX_ROOT": "${sourceDir}/third_party/lynx",
-        "LYNXLIB_LYNX_OUT_DIR": "${sourceDir}/out/lynx/Default"
+        "LYNXLIB_LYNX_OUT_DIR": "${sourceDir}/out/lynx/Prod",
+        "LYNXLIB_BUILD_FLAVOR": "prod"
       }
     }
   ],
@@ -32,6 +33,18 @@
       "configurePreset": "windows",
       "configuration": "Release",
       "targets": ["lynx_static_archive"]
+    },
+    {
+      "name": "static-prod",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_static_archive_prod"]
+    },
+    {
+      "name": "static-dev",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_static_archive_dev"]
     },
     {
       "name": "conan-export",

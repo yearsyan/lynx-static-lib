@@ -4,10 +4,14 @@
 published Conan package:
 
 ```text
-lynxlib/0.2.1@neuyan/stable
-lynxlib-runtime/0.2.1@neuyan/stable
-lynxlib-http/0.2.1@neuyan/stable
+lynxlib/0.2.2@neuyan/stable
+lynxlib-runtime/0.2.2@neuyan/stable
+lynxlib-http/0.2.2@neuyan/stable
 ```
+
+The demo selects the `lynxlib` `dev` flavor, so the linked static library embeds
+`lynx_core_dev.js` and enables inspector/devtool switches. Production generated
+projects use the `prod` flavor by default.
 
 Install dependencies and configure from this directory:
 
@@ -40,6 +44,9 @@ demo/build/Release/compile_commands.json
 The program creates a native Win32 window, enables per-monitor DPI awareness,
 creates a LynxView through the public C API, and loads
 `resources/demo/main.lynx.bundle`.
+
+Only `icudtl.dat` is copied next to the executable. The Lynx core JS is linked
+inside `lynx_static.lib`.
 
 It also registers `lynxlib::http::RegisterCurlHttpService()` on startup. The
 bundle has an HTTP service panel that calls `fetch` and displays the result.

@@ -10,13 +10,14 @@ from lynxlib_common import REPO_ROOT, log, resolve_existing_path, run
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and package lynxlib-http with Conan.")
-    parser.add_argument("--version", default="0.2.1")
+    parser.add_argument("--version", default="0.2.2")
     parser.add_argument("--user", default="neuyan")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--remote", default="neuyan")
     parser.add_argument("--dependency-remote", default="conancenter")
     parser.add_argument("--profile", default=REPO_ROOT / "profiles" / "windows-msvc-static", type=Path)
     parser.add_argument("--lynxlib-ref")
+    parser.add_argument("--lynxlib-flavor", choices=["prod", "dev"], default="prod")
     parser.add_argument("--libcurl-ref", default="libcurl/8.20.0")
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -55,6 +56,8 @@ def main() -> int:
         args.channel,
         "-pr:a",
         profile,
+        "-o",
+        f"lynxlib/*:flavor={args.lynxlib_flavor}",
         "--build=missing",
     ]
     if args.dependency_remote:

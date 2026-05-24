@@ -12,6 +12,8 @@ class LynxlibConan(ConanFile):
     name = "lynxlib"
     package_type = "static-library"
     settings = "os", "arch", "compiler", "build_type"
+    options = {"flavor": ["prod", "dev"]}
+    default_options = {"flavor": "prod"}
     no_copy_source = True
 
     def validate(self) -> None:
@@ -36,7 +38,8 @@ class LynxlibConan(ConanFile):
         override = os.environ.get("LYNXLIB_PACKAGE_OUT_DIR")
         if override:
             return Path(override).expanduser().resolve()
-        return Path(self.source_folder) / "out" / "lynx" / "Default"
+        flavor_dir = "Dev" if str(self.options.flavor) == "dev" else "Prod"
+        return Path(self.source_folder) / "out" / "lynx" / flavor_dir
 
     def package(self) -> None:
         artifact_root = self._artifact_root()
@@ -59,9 +62,18 @@ class LynxlibConan(ConanFile):
         self.cpp_info.libs = ["lynx_static"]
         self.cpp_info.includedirs = ["include"]
         self.cpp_info.libdirs = ["lib"]
-        self.cpp_info.defines = ["LYNX_STATIC_LINK"]
-        self.cpp_info.exelinkflags = ["/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ"]
-        self.cpp_info.sharedlinkflags = ["/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ"]
+        self.cpp_info.defines = [
+            "LYNX_STATIC_LINK",
+            f"LYNXLIB_FLAVOR_{str(self.options.flavor).upper()}",
+        ]
+        self.cpp_info.exelinkflags = [
+            "/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ",
+            "/INCLUDE:lynxlib_force_link_embedded_core_js",
+        ]
+        self.cpp_info.sharedlinkflags = [
+            "/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ",
+            "/INCLUDE:lynxlib_force_link_embedded_core_js",
+        ]
         self.cpp_info.system_libs = [
             "user32",
             "gdi32",

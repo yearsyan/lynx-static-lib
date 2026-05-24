@@ -13,8 +13,14 @@ set(LYNXLIB_LYNX_ROOT
     CACHE PATH "Path to the official Lynx source tree")
 
 set(LYNXLIB_LYNX_OUT_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/out/lynx/Default"
+    "${CMAKE_CURRENT_SOURCE_DIR}/out/lynx/Prod"
     CACHE PATH "GN output directory for official Lynx build artifacts")
+set(LYNXLIB_LYNX_PROD_OUT_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/out/lynx/Prod"
+    CACHE PATH "GN output directory for the production Lynx static build")
+set(LYNXLIB_LYNX_DEV_OUT_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/out/lynx/Dev"
+    CACHE PATH "GN output directory for the development Lynx static build")
 
 set(LYNXLIB_SCRIPT
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build_lynx.py")
@@ -25,10 +31,12 @@ set(LYNXLIB_CONAN_SCRIPT
 set(LYNXLIB_HTTP_CONAN_SCRIPT
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_http_conan.py")
 
-set(LYNXLIB_CONAN_VERSION "0.2.1" CACHE STRING "Conan package version for lynxlib")
+set(LYNXLIB_CONAN_VERSION "0.2.2" CACHE STRING "Conan package version for lynxlib")
 set(LYNXLIB_CONAN_USER "neuyan" CACHE STRING "Conan package user for lynxlib")
 set(LYNXLIB_CONAN_CHANNEL "stable" CACHE STRING "Conan package channel for lynxlib")
 set(LYNXLIB_CONAN_REMOTE "neuyan" CACHE STRING "Conan remote used when uploading lynxlib")
+set(LYNXLIB_BUILD_FLAVOR "prod" CACHE STRING "Lynx static package flavor: prod or dev")
+set_property(CACHE LYNXLIB_BUILD_FLAVOR PROPERTY STRINGS prod dev)
 
 add_custom_target(lynx_official_deps
   COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SYNC_SCRIPT}"
@@ -52,10 +60,33 @@ add_custom_target(lynx_static_archive
           --target static
           --lynx-root "${LYNXLIB_LYNX_ROOT}"
           --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --flavor "${LYNXLIB_BUILD_FLAVOR}"
           --skip-deps
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Building official Lynx objects and archiving them as lynx_static.lib")
+
+add_custom_target(lynx_static_archive_prod
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
+          --target static
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
+          --out-dir "${LYNXLIB_LYNX_PROD_OUT_DIR}"
+          --flavor prod
+          --skip-deps
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Building production lynx_static.lib with embedded release core JS")
+
+add_custom_target(lynx_static_archive_dev
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
+          --target static
+          --lynx-root "${LYNXLIB_LYNX_ROOT}"
+          --out-dir "${LYNXLIB_LYNX_DEV_OUT_DIR}"
+          --flavor dev
+          --skip-deps
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Building development lynx_static.lib with embedded dev core JS and inspector")
 
 add_custom_target(lynx_explorer_demo
   COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_SCRIPT}"
@@ -75,6 +106,7 @@ add_custom_target(lynx_static_conan_export
           --channel "${LYNXLIB_CONAN_CHANNEL}"
           --remote "${LYNXLIB_CONAN_REMOTE}"
           --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --flavor "${LYNXLIB_BUILD_FLAVOR}"
           --library-only
   DEPENDS lynx_static_archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -90,6 +122,7 @@ add_custom_target(lynx_static_conan_upload
           --channel "${LYNXLIB_CONAN_CHANNEL}"
           --remote "${LYNXLIB_CONAN_REMOTE}"
           --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
+          --flavor "${LYNXLIB_BUILD_FLAVOR}"
           --library-only
   DEPENDS lynx_static_archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -102,6 +135,7 @@ add_custom_target(lynx_http_conan_create
           --user "${LYNXLIB_CONAN_USER}"
           --channel "${LYNXLIB_CONAN_CHANNEL}"
           --remote "${LYNXLIB_CONAN_REMOTE}"
+          --lynxlib-flavor "${LYNXLIB_BUILD_FLAVOR}"
   DEPENDS lynx_static_conan_export
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
@@ -114,6 +148,7 @@ add_custom_target(lynx_http_conan_upload
           --user "${LYNXLIB_CONAN_USER}"
           --channel "${LYNXLIB_CONAN_CHANNEL}"
           --remote "${LYNXLIB_CONAN_REMOTE}"
+          --lynxlib-flavor "${LYNXLIB_BUILD_FLAVOR}"
   DEPENDS lynx_static_conan_export
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL

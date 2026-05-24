@@ -27,7 +27,7 @@ class LynxlibRuntimeConan(ConanFile):
         override = os.environ.get("LYNXLIB_PACKAGE_OUT_DIR")
         if override:
             return Path(override).expanduser().resolve()
-        return Path(self.source_folder).parent / "out" / "lynx" / "Default"
+        return Path(self.source_folder).parent / "out" / "lynx" / "Prod"
 
     @staticmethod
     def _find_asset(artifact_root: Path, name: str) -> Path:

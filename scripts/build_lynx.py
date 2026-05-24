@@ -12,10 +12,14 @@ from lynxlib_common import REPO_ROOT, is_windows, log, prepend_path, resolve_exi
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build official Lynx Windows artifacts.")
     parser.add_argument("--target", choices=["deps", "sdk", "static", "explorer", "all"], default="all")
+    parser.add_argument("--flavor", choices=["prod", "dev"], default="prod")
     parser.add_argument("--lynx-root", default=REPO_ROOT / "third_party" / "lynx", type=Path)
-    parser.add_argument("--out-dir", default=REPO_ROOT / "out" / "lynx" / "Default", type=Path)
+    parser.add_argument("--out-dir", default=None, type=Path)
     parser.add_argument("--skip-deps", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.out_dir is None:
+        args.out_dir = REPO_ROOT / "out" / "lynx" / ("Dev" if args.flavor == "dev" else "Prod")
+    return args
 
 
 def find_msvc_tool(tool_name: str, env: dict[str, str]) -> Path | None:
@@ -94,7 +98,8 @@ def set_visual_studio_environment(repo_root: Path) -> dict[str, str]:
     return env
 
 
-def get_gn_args(use_clang: bool) -> str:
+def get_gn_args(use_clang: bool, flavor: str) -> str:
+    enable_inspector = flavor == "dev"
     return "\n".join(
         [
             "desktop_enable_embedder_layer = true",
@@ -129,7 +134,7 @@ def get_gn_args(use_clang: bool) -> str:
             "enable_lepusng_worklet = true",
             "enable_napi_binding = true",
             "is_debug = false",
-            "enable_inspector = true",
+            f"enable_inspector = {'true' if enable_inspector else 'false'}",
             "enable_libcpp_abi_namespace_cr = false",
             'jsengine_type = "quickjs"',
             "",
@@ -137,9 +142,9 @@ def get_gn_args(use_clang: bool) -> str:
     )
 
 
-def invoke_gn_gen(gn: Path, out_dir: Path, source_root: Path, use_clang: bool, env: dict[str, str]) -> None:
+def invoke_gn_gen(gn: Path, out_dir: Path, source_root: Path, use_clang: bool, flavor: str, env: dict[str, str]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "args.gn").write_text(get_gn_args(use_clang), encoding="ascii")
+    (out_dir / "args.gn").write_text(get_gn_args(use_clang, flavor), encoding="ascii")
     log(f"Generating GN build: {out_dir}")
     run([gn, "gen", out_dir, "--ide=vs"], cwd=source_root, env=env)
 
@@ -149,10 +154,98 @@ def invoke_ninja_target(ninja: Path, out_dir: Path, ninja_target: str, env: dict
     run([ninja, "-C", out_dir, ninja_target], env=env)
 
 
-def new_static_archive(out_dir: Path, env: dict[str, str]) -> None:
+def find_runtime_asset(out_dir: Path, name: str) -> Path:
+    candidates = [
+        out_dir / name,
+        out_dir / "lynx_core" / name,
+        out_dir / "lynx_explorer" / name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+def write_embedded_core_js_header(out_dir: Path, flavor: str) -> Path:
+    js_name = "lynx_core_dev.js" if flavor == "dev" else "lynx_core.js"
+    js_path = find_runtime_asset(out_dir, js_name)
+    if not js_path.exists():
+        raise RuntimeError(f"Missing Lynx core JS artifact for {flavor} build: {js_path}")
+
+    data = js_path.read_bytes()
+    generated_dir = out_dir / "lynxlib_generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    header = generated_dir / "lynxlib_embedded_core_js_data.h"
+
+    lines = [
+        "#pragma once",
+        "",
+        "#include <cstddef>",
+        "#include <cstdint>",
+        "",
+        "namespace lynxlib::embedded_core_js {",
+        "",
+        f"inline constexpr bool kDevBuild = {'true' if flavor == 'dev' else 'false'};",
+        f"inline constexpr std::size_t kCoreJsSize = {len(data)};",
+        "alignas(16) inline constexpr std::uint8_t kCoreJsBytes[] = {",
+    ]
+    for offset in range(0, len(data), 16):
+        chunk = data[offset : offset + 16]
+        lines.append("  " + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
+    lines.extend(
+        [
+            "};",
+            "",
+            "}  // namespace lynxlib::embedded_core_js",
+            "",
+        ]
+    )
+    header.write_text("\n".join(lines), encoding="ascii")
+    log(f"Generated embedded {js_name} header: {header}")
+    return header
+
+
+def compile_lynxlib_support_object(lynx: Path, out_dir: Path, flavor: str, env: dict[str, str]) -> Path:
+    header = write_embedded_core_js_header(out_dir, flavor)
+    source = REPO_ROOT / "src" / "lynxlib_embedded_core_js.cc"
+    if not source.exists():
+        raise RuntimeError(f"Missing lynxlib support source: {source}")
+
+    obj_dir = out_dir / "obj" / "lynxlib"
+    obj_dir.mkdir(parents=True, exist_ok=True)
+    obj = obj_dir / "lynxlib_embedded_core_js.obj"
+
+    clang = Path(env["GYP_MSVS_OVERRIDE_PATH"]) / "VC" / "Tools" / "Llvm" / "x64" / "bin" / "clang-cl.exe"
+    if not clang.exists():
+        raise RuntimeError(f"clang-cl.exe was not found: {clang}")
+
+    command = [
+        clang,
+        "/nologo",
+        "/c",
+        "/std:c++17",
+        "/EHsc",
+        "/MT",
+        "/O2",
+        "/DNDEBUG",
+        "/DLYNX_STATIC_LINK",
+        f"/DLYNXLIB_EMBEDDED_CORE_JS_DEV={'1' if flavor == 'dev' else '0'}",
+        f"/I{lynx}",
+        f"/I{header.parent}",
+        f"/Fo{obj}",
+        source,
+    ]
+    log(f"Compiling lynxlib embedded core JS loader: {obj}")
+    run(command, env=env)
+    return obj
+
+
+def new_static_archive(lynx: Path, out_dir: Path, flavor: str, env: dict[str, str]) -> None:
     obj_root = out_dir / "obj"
     if not obj_root.exists():
         raise RuntimeError(f"GN object directory does not exist: {obj_root}")
+
+    support_object = compile_lynxlib_support_object(lynx, out_dir, flavor, env)
 
     objects = [
         path
@@ -163,6 +256,9 @@ def new_static_archive(out_dir: Path, env: dict[str, str]) -> None:
     objects.sort()
     if not objects:
         raise RuntimeError(f"No object files found under {obj_root}")
+    if support_object not in objects:
+        objects.append(support_object)
+        objects.sort()
 
     libraries: list[Path] = []
     boring_ssl_asm = obj_root / "third_party" / "boringssl" / "boringssl_asm.lib"
@@ -177,7 +273,7 @@ def new_static_archive(out_dir: Path, env: dict[str, str]) -> None:
     if not lib:
         raise RuntimeError("Could not find lib.exe or llvm-lib.exe")
 
-    log(f"Archiving {len(objects)} official Lynx object files and {len(libraries)} static libraries into {archive}")
+    log(f"Archiving {len(objects)} Lynx/static SDK object files and {len(libraries)} static libraries into {archive}")
     run([lib, "/NOLOGO", f"/OUT:{archive}", f"@{rsp}"], env=env)
 
 
@@ -213,19 +309,21 @@ def main() -> int:
     if not ninja.exists():
         raise RuntimeError(f"Ninja not found after dependency sync: {ninja}")
 
-    invoke_gn_gen(gn, out_dir, lynx, True, env)
+    invoke_gn_gen(gn, out_dir, lynx, True, args.flavor, env)
 
     if args.target == "sdk":
         invoke_ninja_target(ninja, out_dir, "platform/windows:package_sdk", env)
     elif args.target == "static":
+        invoke_ninja_target(ninja, out_dir, "platform/windows:lynx_core", env)
         invoke_ninja_target(ninja, out_dir, "platform/windows:windows", env)
-        new_static_archive(out_dir, env)
+        new_static_archive(lynx, out_dir, args.flavor, env)
     elif args.target == "explorer":
         invoke_ninja_target(ninja, out_dir, "explorer", env)
     elif args.target == "all":
         invoke_ninja_target(ninja, out_dir, "platform/windows:package_sdk", env)
+        invoke_ninja_target(ninja, out_dir, "platform/windows:lynx_core", env)
         invoke_ninja_target(ninja, out_dir, "platform/windows:windows", env)
-        new_static_archive(out_dir, env)
+        new_static_archive(lynx, out_dir, args.flavor, env)
         invoke_ninja_target(ninja, out_dir, "explorer", env)
 
     log(f"Lynx Windows target '{args.target}' completed.")

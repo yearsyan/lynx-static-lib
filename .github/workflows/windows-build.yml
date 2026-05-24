@@ -10,6 +10,11 @@ on:
         description: "Conan package version to export when the run is not tag-triggered"
         required: false
         default: "0.2.2"
+      upload_conan:
+        description: "Upload the exported package to the private Conan remote"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -148,6 +153,85 @@ jobs:
       - name: Verify local Conan package
         shell: pwsh
         run: conan list "lynxlib/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
+
+      - name: Configure private Conan remote
+        id: conan-remote
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          DISPATCH_UPLOAD_CONAN: ${{ github.event.inputs.upload_conan }}
+          CONAN_REMOTE_NAME: ${{ vars.CONAN_REMOTE_NAME }}
+          CONAN_REMOTE_URL: ${{ secrets.CONAN_REMOTE_URL }}
+          CONAN_USERNAME: ${{ secrets.CONAN_USERNAME }}
+          CONAN_PASSWORD: ${{ secrets.CONAN_PASSWORD }}
+          CONAN_HTTPS_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          CONAN_NO_PROXY: ${{ vars.CONAN_NO_PROXY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tagPush = $env:EVENT_NAME -eq 'push' -and $env:REF -and $env:REF.StartsWith('refs/tags/')
+          $dispatchUpload = if ($env:DISPATCH_UPLOAD_CONAN) { $env:DISPATCH_UPLOAD_CONAN.ToLowerInvariant() } else { '' }
+          $manualUpload = @('1', 'true', 'yes') -contains $dispatchUpload
+          $uploadEnabled = $tagPush -or $manualUpload
+
+          if (-not $uploadEnabled) {
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host 'Conan upload was not requested for this run.'
+            exit 0
+          }
+
+          if (-not $env:CONAN_REMOTE_URL) {
+            throw 'Conan upload was requested, but CONAN_REMOTE_URL secret is not configured.'
+          }
+          if (-not $env:CONAN_USERNAME -or -not $env:CONAN_PASSWORD) {
+            throw 'Conan upload was requested, but CONAN_USERNAME and CONAN_PASSWORD secrets are not both configured.'
+          }
+          if (-not $env:CONAN_HTTPS_PROXY) {
+            throw 'Conan upload was requested, but CONAN_HTTPS_PROXY secret is not configured.'
+          }
+
+          $remoteName = if ($env:CONAN_REMOTE_NAME) { $env:CONAN_REMOTE_NAME } else { 'neuyan' }
+
+          Write-Host "::add-mask::$($env:CONAN_REMOTE_URL)"
+          Write-Host "::add-mask::$($env:CONAN_HTTPS_PROXY)"
+          Write-Host "::add-mask::$($env:CONAN_PASSWORD)"
+
+          $env:HTTPS_PROXY = $env:CONAN_HTTPS_PROXY
+          $env:HTTP_PROXY = $env:CONAN_HTTPS_PROXY
+          $env:ALL_PROXY = $env:CONAN_HTTPS_PROXY
+
+          if ($env:CONAN_NO_PROXY) {
+            $env:NO_PROXY = $env:CONAN_NO_PROXY
+          }
+
+          conan remote add $remoteName $env:CONAN_REMOTE_URL --force
+          conan remote login $remoteName $env:CONAN_USERNAME -p $env:CONAN_PASSWORD
+          conan remote list
+
+          "LYNXLIB_CONAN_REMOTE=$remoteName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload private Conan package
+        if: steps.conan-remote.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          HTTPS_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          HTTP_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          ALL_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          NO_PROXY: ${{ vars.CONAN_NO_PROXY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          python .\scripts\package_conan.py `
+            --skip-build `
+            --upload `
+            --force `
+            --library-only `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --remote $env:LYNXLIB_CONAN_REMOTE
 
       - name: Upload static library artifact
         uses: actions/upload-artifact@v4

@@ -10,9 +10,9 @@ class LynxStaticDemoConan(ConanFile):
     settings = "os", "arch", "compiler", "build_type"
 
     def requirements(self) -> None:
-        self.requires("lynxlib/0.2@neuyan/stable")
-        self.requires("lynxlib-runtime/0.2@neuyan/stable")
-        self.requires("lynxlib-http/0.2@neuyan/stable")
+        self.requires("lynxlib/0.2.1@neuyan/stable")
+        self.requires("lynxlib-runtime/0.2.1@neuyan/stable")
+        self.requires("lynxlib-http/0.2.1@neuyan/stable")
 
     def layout(self) -> None:
         cmake_layout(self)

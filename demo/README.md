@@ -4,9 +4,9 @@
 published Conan package:
 
 ```text
-lynxlib/0.2@neuyan/stable
-lynxlib-runtime/0.2@neuyan/stable
-lynxlib-http/0.2@neuyan/stable
+lynxlib/0.2.1@neuyan/stable
+lynxlib-runtime/0.2.1@neuyan/stable
+lynxlib-http/0.2.1@neuyan/stable
 ```
 
 Install dependencies and configure from this directory:

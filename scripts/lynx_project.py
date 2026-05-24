@@ -11,9 +11,9 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_LYNXLIB_REF = "lynxlib/0.2@neuyan/stable"
-DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.2@neuyan/stable"
-DEFAULT_HTTP_REF = "lynxlib-http/0.2@neuyan/stable"
+DEFAULT_LYNXLIB_REF = "lynxlib/0.2.1@neuyan/stable"
+DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.2.1@neuyan/stable"
+DEFAULT_HTTP_REF = "lynxlib-http/0.2.1@neuyan/stable"
 DEFAULT_REMOTE = "neuyan"
 
 

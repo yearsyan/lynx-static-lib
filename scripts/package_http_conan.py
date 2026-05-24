@@ -10,7 +10,7 @@ from lynxlib_common import REPO_ROOT, log, resolve_existing_path, run
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build and package lynxlib-http with Conan.")
-    parser.add_argument("--version", default="0.2")
+    parser.add_argument("--version", default="0.2.1")
     parser.add_argument("--user", default="neuyan")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--remote", default="neuyan")

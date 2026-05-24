@@ -8,6 +8,9 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 
@@ -21,17 +24,30 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
-    log(" ".join(str(part) for part in command))
+def resolve_command(command: list[str], env: dict[str, str] | None = None) -> list[str]:
     resolved = shutil.which(command[0], path=(env or os.environ).get("PATH"))
     actual_command = [resolved or command[0], *command[1:]]
     if os.name == "nt" and Path(actual_command[0]).suffix.lower() in {".bat", ".cmd"}:
         actual_command = ["cmd.exe", "/d", "/c", *actual_command]
+    return actual_command
+
+
+def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
+    log(" ".join(str(part) for part in command))
+    actual_command = resolve_command(command, env)
     completed = subprocess.run(actual_command, cwd=str(cwd), env=env)
     if completed.returncode != 0:
         raise RuntimeError(
             f"Command failed with exit code {completed.returncode}: {' '.join(command)}"
         )
+
+
+def start_process(
+    command: list[str], cwd: Path, env: dict[str, str] | None = None
+) -> subprocess.Popen:
+    log(" ".join(str(part) for part in command))
+    actual_command = resolve_command(command, env)
+    return subprocess.Popen(actual_command, cwd=str(cwd), env=env)
 
 
 def read_json(path: Path) -> dict:
@@ -227,6 +243,13 @@ def scaffold_config(project_name: str) -> dict:
             "embed_main_bundle": True,
             "install_command": ["pnpm", "install"],
             "build_command": ["pnpm", "exec", "rspeedy", "build"],
+            "dev_command": ["pnpm", "run", "dev"],
+        },
+        "dev": {
+            "host": "127.0.0.1",
+            "port": 3000,
+            "bundle_url": "http://{host}:{port}/main.lynx.bundle",
+            "startup_timeout_s": 30,
         },
         "runtime": {
             "copy_icu": True,
@@ -268,6 +291,8 @@ include("${CMAKE_CURRENT_BINARY_DIR}/generated/project_options.cmake" OPTIONAL)
 find_package(lynxlib CONFIG REQUIRED)
 find_package(lynxlib_runtime CONFIG REQUIRED)
 find_package(lynxlib_http CONFIG REQUIRED)
+find_package(CURL CONFIG REQUIRED)
+find_path(LYNX_PROJECT_CURL_INCLUDE_DIR NAMES curl/curl.h REQUIRED)
 
 set(LYNX_PROJECT_SOURCES
   src/main.cpp)
@@ -291,11 +316,13 @@ else()
     LYNX_PROJECT_ENABLE_DEVTOOL=0)
 endif()
 target_include_directories(${LYNX_PROJECT_EXECUTABLE} PRIVATE
-  "${LYNX_PROJECT_GENERATED_DIR}")
+  "${LYNX_PROJECT_GENERATED_DIR}"
+  "${LYNX_PROJECT_CURL_INCLUDE_DIR}")
 set_property(TARGET ${LYNX_PROJECT_EXECUTABLE} PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib::lynxlib)
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib_http::lynxlib_http)
+target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE CURL::libcurl)
 
 if(MSVC)
   target_compile_options(${LYNX_PROJECT_EXECUTABLE} PRIVATE /EHsc)
@@ -333,12 +360,20 @@ MAIN_CPP_TEMPLATE = r"""
 #include <windows.h>
 #include <shellapi.h>
 
+#include <curl/curl.h>
+
 #include <cstdint>
+#include <cwchar>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <mutex>
+#include <new>
 #include <string>
+#include <thread>
+#include <utility>
 #include <vector>
 
 #ifndef LYNX_PROJECT_ENABLE_DEVTOOL
@@ -349,6 +384,9 @@ MAIN_CPP_TEMPLATE = r"""
 #include "capi/lynx_env_capi.h"
 #endif
 #include "capi/lynx_load_meta_capi.h"
+#include "capi/lynx_generic_resource_fetcher_capi.h"
+#include "capi/lynx_resource_request_capi.h"
+#include "capi/lynx_resource_response_capi.h"
 #include "capi/lynx_template_data_capi.h"
 #include "capi/lynx_view_builder_capi.h"
 #include "capi/lynx_view_capi.h"
@@ -360,6 +398,7 @@ namespace {
 
 constexpr int kInitialWidth = 960;
 constexpr int kInitialHeight = 640;
+constexpr size_t kMaxResourceBytes = 64 * 1024 * 1024;
 
 struct ClientSize {
   int physical_width = 0;
@@ -367,6 +406,18 @@ struct ClientSize {
   float logical_width = 0.0f;
   float logical_height = 0.0f;
   float pixel_ratio = 1.0f;
+};
+
+struct RuntimeOptions {
+  std::filesystem::path bundle_path;
+  std::string dev_url;
+};
+
+struct DownloadResult {
+  bool ok = false;
+  long status_code = 0;
+  std::string error;
+  std::vector<uint8_t> body;
 };
 
 std::filesystem::path ExeDirectory() {
@@ -403,6 +454,126 @@ std::string ToUtf8(const std::filesystem::path& path) {
 
 void FreeTemplateBytes(uint8_t* data, size_t, void*) {
   std::free(data);
+}
+
+void FreeResourceBytes(uint8_t* data, size_t, void*) {
+  delete[] data;
+}
+
+void EnsureCurlGlobalInit() {
+  static std::once_flag init_once;
+  std::call_once(init_once, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
+}
+
+bool IsHttpUrl(const std::string& url) {
+  return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+}
+
+size_t CurlWriteCallback(char* contents, size_t size, size_t nmemb,
+                         void* user_data) {
+  auto* result = static_cast<DownloadResult*>(user_data);
+  if (nmemb != 0 && size > std::numeric_limits<size_t>::max() / nmemb) {
+    result->error = "response body is too large";
+    return 0;
+  }
+  const size_t byte_count = size * nmemb;
+  if (byte_count == 0) {
+    return 0;
+  }
+  if (result->body.size() > kMaxResourceBytes ||
+      byte_count > kMaxResourceBytes - result->body.size()) {
+    result->error = "response body exceeds 64 MiB";
+    return 0;
+  }
+  const auto* bytes = reinterpret_cast<const uint8_t*>(contents);
+  result->body.insert(result->body.end(), bytes, bytes + byte_count);
+  return byte_count;
+}
+
+DownloadResult DownloadUrl(const std::string& url) {
+  EnsureCurlGlobalInit();
+  DownloadResult result;
+  CURL* easy = curl_easy_init();
+  if (!easy) {
+    result.error = "curl_easy_init failed";
+    return result;
+  }
+
+  char error_buffer[CURL_ERROR_SIZE] = {};
+  curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &CurlWriteCallback);
+  curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result);
+  curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, error_buffer);
+  curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+  curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 5L);
+  curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
+  curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 15000L);
+  curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+  curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+  curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
+
+  const CURLcode code = curl_easy_perform(easy);
+  curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status_code);
+  curl_easy_cleanup(easy);
+
+  if (code != CURLE_OK) {
+    result.error = error_buffer[0] ? error_buffer : curl_easy_strerror(code);
+    return result;
+  }
+  if (result.status_code >= 400) {
+    result.error = "HTTP " + std::to_string(result.status_code);
+    return result;
+  }
+  result.ok = true;
+  return result;
+}
+
+void CompleteResourceError(lynx_resource_response_t* response,
+                           const std::string& message) {
+  lynx_resource_response_set_code(response, -1);
+  lynx_resource_response_set_error_message(response, message.c_str());
+  lynx_resource_response_callback(response);
+  lynx_resource_response_release(response);
+}
+
+void CompleteResourceData(lynx_resource_response_t* response,
+                          const std::vector<uint8_t>& body) {
+  lynx_resource_response_set_code(response, 0);
+  if (!body.empty()) {
+    auto* bytes = new (std::nothrow) uint8_t[body.size()];
+    if (!bytes) {
+      CompleteResourceError(response, "out of memory while copying resource");
+      return;
+    }
+    std::memcpy(bytes, body.data(), body.size());
+    lynx_resource_response_set_data(response, bytes, body.size(),
+                                    &FreeResourceBytes, nullptr);
+  }
+  lynx_resource_response_callback(response);
+  lynx_resource_response_release(response);
+}
+
+void FetchResource(lynx_generic_resource_fetcher_t*,
+                   lynx_resource_request_t* request,
+                   lynx_resource_response_t* response) {
+  const char* raw_url = lynx_resource_request_get_url(request);
+  std::string url = raw_url ? raw_url : "";
+  lynx_resource_request_release(request);
+
+  std::thread([url = std::move(url), response]() {
+    if (!IsHttpUrl(url)) {
+      CompleteResourceError(response, "only http and https resources are supported");
+      return;
+    }
+    DownloadResult result = DownloadUrl(url);
+    if (!result.ok) {
+      CompleteResourceError(response, result.error.empty() ? "resource fetch failed"
+                                                           : result.error);
+      return;
+    }
+    CompleteResourceData(response, result.body);
+  }).detach();
 }
 
 float DpiScaleForWindow(HWND hwnd) {
@@ -484,8 +655,7 @@ void ConfigureDevtool() {
 
 class LynxApp {
  public:
-  explicit LynxApp(std::filesystem::path bundle_path)
-      : bundle_path_(std::move(bundle_path)) {}
+  explicit LynxApp(RuntimeOptions options) : options_(std::move(options)) {}
 
   bool Create(HINSTANCE instance, int show_command) {
     WNDCLASSW window_class = {};
@@ -577,6 +747,12 @@ class LynxApp {
     lynx_view_builder_set_frame(builder, 0.0f, 0.0f, size.logical_width,
                                 size.logical_height);
     lynx_view_builder_set_parent(builder, hwnd_);
+    generic_fetcher_ = lynx_generic_resource_fetcher_create(this);
+    lynx_generic_resource_fetcher_bind_fetch_resource(generic_fetcher_,
+                                                      &FetchResource);
+    lynx_generic_resource_fetcher_bind_fetch_resource_path(generic_fetcher_,
+                                                           &FetchResource);
+    lynx_view_builder_set_generic_resource_fetcher(builder, generic_fetcher_);
 
     const std::filesystem::path icu_path = ExeDirectory() / L"icudtl.dat";
     if (std::filesystem::exists(icu_path)) {
@@ -601,27 +777,33 @@ class LynxApp {
           generated::kBundle,
           generated::kBundle + generated::kBundleSize);
     }
-    return ReadBinaryFile(bundle_path_);
+    return ReadBinaryFile(options_.bundle_path);
   }
 
   void LoadBundle() {
-    std::vector<uint8_t> bytes = LoadBundleBytes();
-    if (bytes.empty()) {
-      SetWindowTextW(hwnd_, L"Lynx bundle missing");
-      return;
-    }
-
-    uint8_t* owned_bytes = static_cast<uint8_t*>(std::malloc(bytes.size()));
-    if (!owned_bytes) {
-      SetWindowTextW(hwnd_, L"Out of memory");
-      return;
-    }
-    std::memcpy(owned_bytes, bytes.data(), bytes.size());
-
     lynx_load_meta_t* load_meta = lynx_load_meta_create();
-    lynx_load_meta_set_url(load_meta, generated::kTemplateUrl);
-    lynx_load_meta_set_binary_data(load_meta, owned_bytes, bytes.size(),
-                                   &FreeTemplateBytes, nullptr);
+    if (!options_.dev_url.empty()) {
+      lynx_load_meta_set_url(load_meta, options_.dev_url.c_str());
+    } else {
+      std::vector<uint8_t> bytes = LoadBundleBytes();
+      if (bytes.empty()) {
+        lynx_load_meta_release(load_meta);
+        SetWindowTextW(hwnd_, L"Lynx bundle missing");
+        return;
+      }
+
+      uint8_t* owned_bytes = static_cast<uint8_t*>(std::malloc(bytes.size()));
+      if (!owned_bytes) {
+        lynx_load_meta_release(load_meta);
+        SetWindowTextW(hwnd_, L"Out of memory");
+        return;
+      }
+      std::memcpy(owned_bytes, bytes.data(), bytes.size());
+
+      lynx_load_meta_set_url(load_meta, generated::kTemplateUrl);
+      lynx_load_meta_set_binary_data(load_meta, owned_bytes, bytes.size(),
+                                     &FreeTemplateBytes, nullptr);
+    }
 
     lynx_template_data_t* global_props =
         lynx_template_data_create_from_json(generated::kGlobalPropsJson);
@@ -648,24 +830,61 @@ class LynxApp {
       lynx_view_release(lynx_view_);
       lynx_view_ = nullptr;
     }
+    if (generic_fetcher_) {
+      lynx_generic_resource_fetcher_release(generic_fetcher_);
+      generic_fetcher_ = nullptr;
+    }
   }
 
   HWND hwnd_ = nullptr;
   lynx_view_t* lynx_view_ = nullptr;
-  std::filesystem::path bundle_path_;
+  lynx_generic_resource_fetcher_t* generic_fetcher_ = nullptr;
+  RuntimeOptions options_;
 };
 
-std::filesystem::path ParseBundlePathFromCommandLine() {
+std::string WideToUtf8(const wchar_t* value) {
+  if (!value || value[0] == L'\0') {
+    return {};
+  }
+  const int required =
+      WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+  if (required <= 1) {
+    return {};
+  }
+  std::string result(static_cast<size_t>(required - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, value, -1, result.data(), required, nullptr,
+                      nullptr);
+  return result;
+}
+
+RuntimeOptions ParseRuntimeOptionsFromCommandLine() {
   int argc = 0;
   LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-  std::filesystem::path bundle_path = DefaultBundlePath();
-  if (argv && argc > 1) {
-    bundle_path = argv[1];
+  RuntimeOptions options;
+  options.bundle_path = DefaultBundlePath();
+  for (int index = 1; argv && index < argc; ++index) {
+    std::wstring argument = argv[index];
+    if ((argument == L"--dev-url" || argument == L"--url") &&
+        index + 1 < argc) {
+      options.dev_url = WideToUtf8(argv[++index]);
+      continue;
+    }
+    if (argument.rfind(L"--dev-url=", 0) == 0) {
+      options.dev_url = WideToUtf8(argument.c_str() + 10);
+      continue;
+    }
+    if (argument.rfind(L"--url=", 0) == 0) {
+      options.dev_url = WideToUtf8(argument.c_str() + 6);
+      continue;
+    }
+    if (!argument.empty() && argument[0] != L'-') {
+      options.bundle_path = argument;
+    }
   }
   if (argv) {
     LocalFree(argv);
   }
-  return bundle_path;
+  return options;
 }
 
 }  // namespace
@@ -676,7 +895,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
   ConfigureDevtool();
 #endif
   lynxlib::http::RegisterCurlHttpService();
-  LynxApp app(ParseBundlePathFromCommandLine());
+  LynxApp app(ParseRuntimeOptionsFromCommandLine());
   if (!app.Create(instance, show_command)) {
     lynxlib::http::UnregisterCurlHttpService();
     MessageBoxW(nullptr, L"Failed to create the Lynx window.",
@@ -842,7 +1061,19 @@ import { pluginReactLynx } from "@lynx-js/react-rsbuild-plugin";
 import { defineConfig } from "@lynx-js/rspeedy";
 import { pluginSass } from "@rsbuild/plugin-sass";
 
+const devServerHost = process.env.LYNX_DEV_SERVER_HOST ?? "127.0.0.1";
+const devServerPort = Number(process.env.LYNX_DEV_SERVER_PORT ?? 3000);
+
 export default defineConfig({
+  server: {
+    host: devServerHost,
+    port: devServerPort,
+    strictPort: true,
+  },
+  dev: {
+    hmr: true,
+    liveReload: false,
+  },
   source: {
     entry: {
       main: "./src/index.tsx",
@@ -924,6 +1155,7 @@ Useful commands:
 
 ```powershell
 python .\lynx_project.py build .
+python .\lynx_project.py dev .
 python .\lynx_project.py build . --export
 python .\lynx_project.py export .
 ```
@@ -943,6 +1175,10 @@ is still used for ICU data.
 The generated native entry point links `lynxlib-http` and registers
 `LynxHttpService`, so bundle code can call the standard `fetch()` API after the
 matching `lynxlib-http` Conan package is available.
+
+`python .\lynx_project.py dev .` builds the native shell, starts `rspeedy dev`,
+launches the executable with `--dev-url`, and lets Rspeedy HMR push bundle
+updates through Lynx's built-in `LynxWebSocketModule`.
 
 `compile_commands.copy_to_root` copies the CMake-generated compile database to
 `compile_commands.json` in the project root for clangd and editor integrations.
@@ -1020,7 +1256,7 @@ def create_project(args: argparse.Namespace) -> None:
         "name": f"{package_name}-bundle",
         "private": True,
         "type": "module",
-        "scripts": {"build": "rspeedy build"},
+        "scripts": {"build": "rspeedy build", "dev": "rspeedy dev"},
         "dependencies": {"@lynx-js/react": "0.107.0"},
         "devDependencies": {
             "@lynx-js/react-rsbuild-plugin": "0.9.8",
@@ -1056,21 +1292,31 @@ def resolve_project_path(project_dir: Path, value: str | None) -> Path | None:
     return path.resolve()
 
 
-def build_bundle(project_dir: Path, config: dict, env: dict[str, str]) -> None:
+def bundle_source_dir(project_dir: Path, config: dict) -> Path:
     bundle = config.get("bundle", {})
     source_dir = resolve_project_path(project_dir, bundle.get("source_dir", "bundle"))
     if source_dir is None:
         raise RuntimeError("bundle.source_dir is not configured.")
+    return source_dir
+
+
+def ensure_bundle_dependencies(source_dir: Path, bundle: dict, env: dict[str, str]) -> None:
+    rspeedy = source_dir / "node_modules" / "@lynx-js" / "rspeedy" / "bin" / "rspeedy.js"
+    if rspeedy.exists():
+        return
+    install_command = bundle.get("install_command") or ["pnpm", "install"]
+    run([str(part) for part in install_command], cwd=source_dir, env=env)
+
+
+def build_bundle(project_dir: Path, config: dict, env: dict[str, str]) -> None:
+    bundle = config.get("bundle", {})
+    source_dir = bundle_source_dir(project_dir, config)
 
     output = resolve_project_path(project_dir, bundle.get("main", "bundle/dist/main.lynx.bundle"))
     if output is None:
         raise RuntimeError("bundle.main is not configured.")
 
-    rspeedy = source_dir / "node_modules" / "@lynx-js" / "rspeedy" / "bin" / "rspeedy.js"
-    if not rspeedy.exists():
-        install_command = bundle.get("install_command") or ["pnpm", "install"]
-        run([str(part) for part in install_command], cwd=source_dir, env=env)
-
+    ensure_bundle_dependencies(source_dir, bundle, env)
     build_command = bundle.get("build_command") or ["pnpm", "exec", "rspeedy", "build"]
     run([str(part) for part in build_command], cwd=source_dir, env=env)
     if not output.exists():
@@ -1310,6 +1556,117 @@ def configure_project(args: argparse.Namespace, build_after: bool) -> Path:
     return build_dir
 
 
+def format_dev_url(template: str, host: str, port: int) -> str:
+    return template.replace("{host}", host).replace("{port}", str(port))
+
+
+def wait_for_dev_server(url: str, timeout_s: float, process: subprocess.Popen) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_error = ""
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"rspeedy dev exited with code {process.returncode}")
+        try:
+            request = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(request, timeout=1.0) as response:
+                if response.status < 500:
+                    return
+        except (OSError, TimeoutError, urllib.error.URLError) as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+    detail = f": {last_error}" if last_error else ""
+    raise RuntimeError(f"Timed out waiting for rspeedy dev at {url}{detail}")
+
+
+def stop_process(process: subprocess.Popen | None, name: str) -> None:
+    if process is None or process.poll() is not None:
+        return
+    log(f"Stopping {name}...")
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def dev_project(args: argparse.Namespace) -> None:
+    project_dir = Path(args.project_dir).resolve()
+    config = read_json(project_config_path(project_dir))
+    build_type = args.build_type
+    target = sanitize_identifier(config.get("target") or config.get("name") or "lynx_app")
+    build_dir = project_dir / "build" / build_type
+
+    if not args.skip_build:
+        configure_project(
+            argparse.Namespace(
+                project_dir=str(project_dir),
+                build_type=build_type,
+                remote=args.remote,
+                skip_bundle=True,
+                export=False,
+                export_dir=None,
+            ),
+            build_after=True,
+        )
+
+    exe = build_dir / f"{target}.exe"
+    if not exe.exists():
+        raise RuntimeError(f"Executable was not found: {exe}. Run build first or omit --skip-build.")
+
+    env = os.environ.copy()
+    bundle = config.get("bundle", {})
+    source_dir = bundle_source_dir(project_dir, config)
+    ensure_bundle_dependencies(source_dir, bundle, env)
+
+    dev = config.get("dev", {})
+    host = args.host or str(dev.get("host") or "127.0.0.1")
+    port = int(args.port if args.port is not None else dev.get("port", 3000))
+    startup_timeout_s = float(dev.get("startup_timeout_s", 30))
+    url_template = str(dev.get("bundle_url") or "http://{host}:{port}/main.lynx.bundle")
+    dev_url = format_dev_url(url_template, host, port)
+    dev_command = dev.get("command") or bundle.get("dev_command") or ["pnpm", "run", "dev"]
+
+    env["LYNX_DEV_SERVER_HOST"] = host
+    env["LYNX_DEV_SERVER_PORT"] = str(port)
+
+    server_process: subprocess.Popen | None = None
+    app_process: subprocess.Popen | None = None
+    try:
+        server_process = start_process([str(part) for part in dev_command], cwd=source_dir, env=env)
+        wait_for_dev_server(dev_url, startup_timeout_s, server_process)
+        log(f"Dev bundle: {dev_url}")
+        app_process = start_process(
+            [str(exe), "--dev-url", dev_url],
+            cwd=build_dir,
+            env=env,
+        )
+
+        while True:
+            if app_process.poll() is not None:
+                return
+            if server_process.poll() is not None:
+                raise RuntimeError(f"rspeedy dev exited with code {server_process.returncode}")
+            time.sleep(0.25)
+    except KeyboardInterrupt:
+        log("Stopping dev session...")
+    finally:
+        stop_process(app_process, "app")
+        stop_process(server_process, "rspeedy dev")
+
+
 def export_project(args: argparse.Namespace) -> None:
     project_dir = Path(args.project_dir).resolve()
     config = read_json(project_config_path(project_dir))
@@ -1377,6 +1734,14 @@ def parse_args() -> argparse.Namespace:
     build_parser.add_argument("--export", action="store_true")
     build_parser.add_argument("--export-dir")
 
+    dev_parser = subparsers.add_parser("dev", help="Build, start rspeedy dev, and launch the app against it.")
+    dev_parser.add_argument("project_dir", nargs="?", default=".")
+    dev_parser.add_argument("--build-type", default="Release")
+    dev_parser.add_argument("--remote")
+    dev_parser.add_argument("--host")
+    dev_parser.add_argument("--port", type=int)
+    dev_parser.add_argument("--skip-build", action="store_true")
+
     export_parser = subparsers.add_parser("export", help="Export an already built project.")
     export_parser.add_argument("project_dir", nargs="?", default=".")
     export_parser.add_argument("--build-type", default="Release")
@@ -1393,6 +1758,8 @@ def main() -> int:
         configure_project(args, build_after=False)
     elif args.command == "build":
         configure_project(args, build_after=True)
+    elif args.command == "dev":
+        dev_project(args)
     elif args.command == "export":
         export_project(args)
     else:

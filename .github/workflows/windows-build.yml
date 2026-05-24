@@ -44,6 +44,18 @@ jobs:
         shell: pwsh
         run: python .\scripts\check_repository.py
 
+      - name: Cache Habitat binary
+        uses: actions/cache@v4
+        with:
+          path: third_party/_cache
+          key: lynxlib-habitat-${{ runner.os }}-${{ hashFiles('third_party/official_deps.manifest.json', 'scripts/sync_lynx_deps.py') }}
+
+      - name: Cache official Lynx buildtools
+        uses: actions/cache@v4
+        with:
+          path: third_party/lynx/buildtools
+          key: lynx-buildtools-${{ runner.os }}-${{ hashFiles('third_party/official_deps.manifest.json', 'third_party/lynx/DEPS', 'third_party/lynx/pnpm-lock.yaml', 'scripts/sync_lynx_deps.py') }}
+
       - name: Ensure Windows LLVM toolchain
         shell: pwsh
         run: |

@@ -42,6 +42,18 @@ def runtime_package_reference(args: argparse.Namespace) -> str:
     return f"lynxlib-runtime/{args.version}@{args.user}/{args.channel}"
 
 
+def find_runtime_asset(out_dir: Path, name: str) -> Path:
+    candidates = [
+        out_dir / name,
+        out_dir / "lynx_core" / name,
+        out_dir / "lynx_explorer" / name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def find_llvm_strip() -> Path | None:
     found = shutil.which("llvm-strip") or shutil.which("llvm-strip.exe")
     if found:
@@ -75,6 +87,8 @@ def require_artifacts(out_dir: Path, include_runtime: bool) -> None:
     ]
     if include_runtime:
         required.append(out_dir / "icudtl.dat")
+        required.append(find_runtime_asset(out_dir, "lynx_core.js"))
+        required.append(find_runtime_asset(out_dir, "lynx_core_dev.js"))
     missing = [path for path in required if not path.exists()]
     if missing:
         formatted = "\n  ".join(str(path) for path in missing)
@@ -90,6 +104,8 @@ def prepare_package_artifacts(out_dir: Path, output_folder: Path, strip_debug: b
     copytree_replace(out_dir / "include", package_out / "include")
     if include_runtime:
         shutil.copy2(out_dir / "icudtl.dat", package_out / "icudtl.dat")
+        shutil.copy2(find_runtime_asset(out_dir, "lynx_core.js"), package_out / "lynx_core.js")
+        shutil.copy2(find_runtime_asset(out_dir, "lynx_core_dev.js"), package_out / "lynx_core_dev.js")
     shutil.copy2(out_dir / "lynx_static.lib", package_out / "lynx_static.lib")
 
     llvm_strip = find_llvm_strip()

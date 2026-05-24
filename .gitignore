@@ -1,9 +1,9 @@
 # CMake / local build output
 /build/
-/generated/
 /dist/
 /out/
 /cmake-build-*/
+/http/test_package/build/
 /.vs/
 *.user
 CMakeUserPresets.json

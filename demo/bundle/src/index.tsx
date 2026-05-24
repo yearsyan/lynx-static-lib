@@ -1,8 +1,96 @@
-import { root } from "@lynx-js/react";
+import { root, useEffect, useState } from "@lynx-js/react";
 
 import "./styles.scss";
 
+type HttpState = {
+  status: string;
+  detail: string;
+};
+
+type ProbeState = {
+  effect: string;
+  backgroundTap: string;
+  autoFetch: string;
+};
+
+async function fetchHttpbinTitle(): Promise<HttpState> {
+  "background only";
+  const response = await fetch("https://httpbin.org/json", {
+    headers: {
+      Accept: "application/json",
+      "X-Lynxlib-Demo": "curl-http-service",
+    },
+  });
+  const text = await response.text();
+  const body = JSON.parse(text);
+  const title = body?.slideshow?.title ?? "body parsed";
+  return {
+    status: `HTTP ${response.status}`,
+    detail: String(title),
+  };
+}
+
+function describeError(error: unknown) {
+  "background only";
+  return error instanceof Error ? error.message : String(error);
+}
+
 function App() {
+  const [http, setHttp] = useState<HttpState>({
+    status: "idle",
+    detail: "tap Fetch to request httpbin",
+  });
+  const [probe, setProbe] = useState<ProbeState>({
+    effect: "waiting for useEffect",
+    backgroundTap: "waiting for bindtap",
+    autoFetch: "waiting for timer",
+  });
+
+  useEffect(() => {
+    "background only";
+    console.log("[lynxlib-demo] mount useEffect log only");
+    setTimeout(() => {
+      "background only";
+      console.log("[lynxlib-demo] auto fetch timer fired");
+      startFetch("useEffect timer");
+    }, 1000);
+  }, []);
+
+  function startFetch(trigger: string) {
+    "background only";
+    console.log(`[lynxlib-demo] fetch start trigger=${trigger}`);
+    fetchHttpbinTitle()
+      .then((next) => {
+        console.log(`[lynxlib-demo] fetch success ${next.status}`);
+        setHttp(next);
+        setProbe((current) => ({
+          ...current,
+          autoFetch: `request completed from ${trigger}`,
+        }));
+      })
+      .catch((error) => {
+        console.log(`[lynxlib-demo] fetch failed ${describeError(error)}`);
+        setHttp({
+          status: "request failed",
+          detail: describeError(error),
+        });
+        setProbe((current) => ({
+          ...current,
+          autoFetch: "request failed",
+        }));
+      });
+  }
+
+  function handleFetchTap() {
+    "background only";
+    console.log("[lynxlib-demo] Fetch tap handler invoked");
+    setProbe((current) => ({
+      ...current,
+      backgroundTap: "background bindtap invoked",
+    }));
+    startFetch("Fetch bindtap");
+  }
+
   return (
     <view className="page">
       <view className="hero">
@@ -10,6 +98,22 @@ function App() {
         <text className="title">Lynx static demo</text>
         <text className="subtitle">Native Win32 window</text>
         <text className="subtitle">Local bundle, static SDK link</text>
+      </view>
+      <view className="httpPanel">
+        <view className="httpHeader">
+          <text className="sectionTitle">HTTP service check</text>
+          <view className="httpAction" bindtap={handleFetchTap}>
+            <text className="httpActionText">Fetch</text>
+          </view>
+        </view>
+        <text className="sampleText">{http.status}</text>
+        <text className="sampleText">{http.detail}</text>
+      </view>
+      <view className="probePanel">
+        <text className="sectionTitle">Runtime probes</text>
+        <text className="sampleText">useEffect: {probe.effect}</text>
+        <text className="sampleText">background tap: {probe.backgroundTap}</text>
+        <text className="sampleText">auto fetch: {probe.autoFetch}</text>
       </view>
       <view className="grid">
         <view className="tile blue">
@@ -33,7 +137,7 @@ function App() {
         <text className="sampleText">Mixed: English + 中文 + 日本語 + 한국어 + 12345</text>
       </view>
       <view className="footer">
-        <text className="footerText">Resize the window: content stays visible.</text>
+        <text className="footerText">Resize the window: content stays visible. Fetch uses lynxlib-http.</text>
       </view>
     </view>
   );

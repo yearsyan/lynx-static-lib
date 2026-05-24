@@ -11,6 +11,7 @@ the upstream Windows GN/Ninja build.
 - `scripts/sync_lynx_deps.py`: downloads pinned Habitat and runs Lynx dependency sync
 - `scripts/build_lynx.py`: runs GN/Ninja and optionally creates `lynx_static.lib`
 - `scripts/package_conan.py`: exports and optionally uploads the static package to Conan
+- `scripts/package_http_conan.py`: builds and exports the optional libcurl HTTP service package
 - `scripts/build_conan_demo.py`: installs Conan dependencies and builds the standalone demo
 - `scripts/invoke_cmake.py`: finds or downloads a pinned CMake for CI
 - `scripts/ensure_windows_toolchain.py`: validates the VS LLVM/Clang component
@@ -20,6 +21,7 @@ the upstream Windows GN/Ninja build.
 - `demo/CMakeLists.txt`: standalone Win32 demo that consumes `lynxlib` from Conan
 - `demo/conanfile.py`: Conan consumer recipe for the standalone demo
 - `demo/bundle`: local Lynx demo page source built with the official rspeedy toolchain
+- `http/`: optional `lynxlib-http` static library implementing `LynxHttpService` with libcurl
 - `third_party/official_deps.manifest.json`: reproducibility manifest
 - `out/`: ignored official build output
 
@@ -111,17 +113,64 @@ The default package reference is:
 
 ```text
 lynxlib/0.1.4@neuyan/stable
-lynxlib-runtime/0.1.0@neuyan/stable
+lynxlib-runtime/0.1.4@neuyan/stable
+lynxlib-http/0.1.4@neuyan/stable
 ```
 
 `scripts/package_conan.py` uses `profiles/windows-msvc-static`, so the exported
 binary is keyed as Windows x86_64, Release, MSVC ABI, static runtime, C++17.
 
+## HTTP Service Package
+
+`lynxlib-http` is a separate static package. It links `lynxlib` plus Conan
+`libcurl` and registers a `LynxHttpService` implementation for `fetch` and
+`lynx.fetch`.
+
+```console
+python scripts/package_http_conan.py --version 0.1.4
+```
+
+The script uses `conancenter` for public dependencies by default and expects
+`lynxlib/0.1.4@neuyan/stable` to already exist in the local Conan cache.
+
+Or through CMake:
+
+```console
+python scripts/invoke_cmake.py --build --preset http-conan-create
+```
+
+Upload it after a successful create:
+
+```console
+python scripts/package_http_conan.py --version 0.1.4 --upload --remote neuyan
+```
+
+Consumer CMake projects link the optional package and register it once during
+application startup:
+
+```cmake
+find_package(lynxlib_http CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE lynxlib_http::lynxlib_http)
+```
+
+```cpp
+#include "lynxlib/http_service.h"
+
+lynxlib::http::RegisterCurlHttpService();
+```
+
+The default curl build uses Windows Schannel for TLS and c-ares for evented
+DNS. The service only permits `http` and `https` URLs at runtime and uses
+libcurl's `curl_multi_socket_action` model behind one worker thread, so
+concurrent requests share a single multi handle instead of creating one thread
+per request.
+
 ## Standalone Demo
 
 The demo is now a separate CMake project under `demo/`. It no longer links
 `out/lynx/Default/lynx_static.lib` directly and does not include the top-level
-source tree. It consumes `lynxlib` through Conan:
+source tree. It consumes `lynxlib`, `lynxlib-runtime`, and `lynxlib-http`
+through Conan:
 
 ```console
 cd demo
@@ -157,6 +206,9 @@ The demo loads its local prebuilt bundle:
 ```text
 demo/bundle/dist/main.lynx.bundle
 ```
+
+The bundle includes an HTTP panel that calls `fetch` after the native demo
+registers `lynxlib::http::RegisterCurlHttpService()`.
 
 To refresh that bundle from source, use `scripts/build_demo_bundle.py` while the
 official Lynx submodule dependencies are available. The standalone demo build

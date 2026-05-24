@@ -8,6 +8,7 @@ endif()
 
 find_package(lynxlib CONFIG REQUIRED)
 find_package(lynxlib_runtime CONFIG REQUIRED)
+find_package(lynxlib_http CONFIG REQUIRED)
 
 set(LYNX_STATIC_DEMO_BUNDLE
     "${CMAKE_CURRENT_SOURCE_DIR}/bundle/dist/main.lynx.bundle"
@@ -28,7 +29,9 @@ target_compile_definitions(lynx_static_demo PRIVATE
   NOMINMAX)
 set_property(TARGET lynx_static_demo PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-target_link_libraries(lynx_static_demo PRIVATE lynxlib::lynxlib)
+target_link_libraries(lynx_static_demo PRIVATE
+  lynxlib::lynxlib
+  lynxlib_http::lynxlib_http)
 
 if(MSVC)
   target_compile_options(lynx_static_demo PRIVATE /EHsc)

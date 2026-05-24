@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 DEFAULT_LYNXLIB_REF = "lynxlib/0.1.4@neuyan/stable"
-DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.1.0@neuyan/stable"
+DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.1.4@neuyan/stable"
 DEFAULT_REMOTE = "neuyan"
 
 
@@ -253,13 +253,13 @@ endif()
 enable_language(RC)
 
 set(LYNX_PROJECT_EXECUTABLE "@TARGET@")
-set(LYNX_PROJECT_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+set(LYNX_PROJECT_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set(LYNX_PROJECT_BUNDLE "${CMAKE_CURRENT_SOURCE_DIR}/bundle/dist/main.lynx.bundle")
 set(LYNX_PROJECT_EMBED_BUNDLE ON)
 set(LYNX_PROJECT_COPY_ICU ON)
 set(LYNX_PROJECT_ICON_RC "")
 
-include("${CMAKE_CURRENT_SOURCE_DIR}/generated/project_options.cmake" OPTIONAL)
+include("${CMAKE_CURRENT_BINARY_DIR}/generated/project_options.cmake" OPTIONAL)
 
 find_package(lynxlib CONFIG REQUIRED)
 find_package(lynxlib_runtime CONFIG REQUIRED)
@@ -892,8 +892,8 @@ not part of the redistributable app.
 
 Project behavior is controlled by `lynx_project.json`.
 Set `bundle.embed_main_bundle` to `true` to compile `bundle/dist/main.lynx.bundle`
-into `generated/generated_bundle.h`; set it to `false` to copy the bundle next
-to the executable under `resources/main.lynx.bundle`.
+into `build/<build-type>/generated/generated_bundle.h`; set it to `false` to
+copy the bundle next to the executable under `resources/main.lynx.bundle`.
 
 `compile_commands.copy_to_root` copies the CMake-generated compile database to
 `compile_commands.json` in the project root for clangd and editor integrations.
@@ -902,7 +902,6 @@ to the executable under `resources/main.lynx.bundle`.
 
 GITIGNORE_TEMPLATE = r"""
 /build/
-/generated/
 /bundle/node_modules/
 /bundle/dist/
 /bundle/package-lock.json
@@ -919,8 +918,8 @@ def template_replace(text: str, values: dict[str, str]) -> str:
     return text.strip() + "\n"
 
 
-def ensure_generated_dir(project_dir: Path) -> Path:
-    generated = project_dir / "generated"
+def ensure_generated_dir(build_dir: Path) -> Path:
+    generated = build_dir / "generated"
     generated.mkdir(parents=True, exist_ok=True)
     return generated
 
@@ -1026,11 +1025,29 @@ def build_bundle(project_dir: Path, config: dict, env: dict[str, str]) -> None:
         raise RuntimeError(f"Bundle build did not produce {output}")
 
 
-def generate_bundle_header(project_dir: Path, config: dict) -> None:
+def migrate_cmake_generated_dir(project_dir: Path) -> None:
+    cmake_lists = project_dir / "CMakeLists.txt"
+    if not cmake_lists.exists():
+        return
+
+    text = cmake_lists.read_text(encoding="utf-8")
+    updated = text.replace(
+        'set(LYNX_PROJECT_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/generated")',
+        'set(LYNX_PROJECT_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")',
+    ).replace(
+        'include("${CMAKE_CURRENT_SOURCE_DIR}/generated/project_options.cmake" OPTIONAL)',
+        'include("${CMAKE_CURRENT_BINARY_DIR}/generated/project_options.cmake" OPTIONAL)',
+    )
+    if updated != text:
+        write_text(cmake_lists, updated)
+        log(f"Updated generated output path in: {cmake_lists}")
+
+
+def generate_bundle_header(project_dir: Path, build_dir: Path, config: dict) -> None:
     bundle = config.get("bundle", {})
     output = resolve_project_path(project_dir, bundle.get("main", "bundle/dist/main.lynx.bundle"))
     embed = bool(bundle.get("embed_main_bundle", True))
-    generated = ensure_generated_dir(project_dir)
+    generated = ensure_generated_dir(build_dir)
 
     if embed:
         if output is None or not output.exists():
@@ -1069,8 +1086,8 @@ inline constexpr std::size_t kBundleSize = 0;
     write_text(generated / "generated_bundle.h", header)
 
 
-def generate_config_files(project_dir: Path, config: dict) -> None:
-    generated = ensure_generated_dir(project_dir)
+def generate_config_files(project_dir: Path, build_dir: Path, config: dict) -> None:
+    generated = ensure_generated_dir(build_dir)
     target = sanitize_identifier(config.get("target") or config.get("name") or "lynx_app")
     display_name = str(config.get("display_name") or config.get("name") or target)
     template_url = f"assets://{target}/main"
@@ -1176,8 +1193,9 @@ def configure_project(args: argparse.Namespace, build_after: bool) -> Path:
     if not args.skip_bundle:
         build_bundle(project_dir, config, env)
 
-    generate_bundle_header(project_dir, config)
-    generate_config_files(project_dir, config)
+    migrate_cmake_generated_dir(project_dir)
+    generate_bundle_header(project_dir, build_dir, config)
+    generate_config_files(project_dir, build_dir, config)
     generate_conanfile(project_dir, config)
 
     conan = config.get("conan", {})
@@ -1252,12 +1270,14 @@ def export_project(args: argparse.Namespace) -> None:
     shutil.copy2(exe, export_dir / exe.name)
     exported = [exe.name]
 
-    icu = build_dir / "icudtl.dat"
-    if copy_icu and icu.exists():
-        shutil.copy2(icu, export_dir / "icudtl.dat")
-        exported.append("icudtl.dat")
-    elif copy_icu:
-        log(f"warning: runtime ICU asset was not found: {icu}")
+    runtime_assets = ["icudtl.dat", "lynx_core.js", "lynx_core_dev.js"]
+    for name in runtime_assets:
+        asset = build_dir / name
+        if copy_icu and asset.exists():
+            shutil.copy2(asset, export_dir / name)
+            exported.append(name)
+        elif copy_icu:
+            log(f"warning: runtime asset was not found: {asset}")
 
     resources = build_dir / "resources"
     if not embed_bundle and resources.exists():

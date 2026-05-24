@@ -5,7 +5,8 @@ published Conan package:
 
 ```text
 lynxlib/0.1.4@neuyan/stable
-lynxlib-runtime/0.1.0@neuyan/stable
+lynxlib-runtime/0.1.4@neuyan/stable
+lynxlib-http/0.1.4@neuyan/stable
 ```
 
 Install dependencies and configure from this directory:
@@ -39,6 +40,9 @@ demo/build/Release/compile_commands.json
 The program creates a native Win32 window, enables per-monitor DPI awareness,
 creates a LynxView through the public C API, and loads
 `resources/demo/main.lynx.bundle`.
+
+It also registers `lynxlib::http::RegisterCurlHttpService()` on startup. The
+bundle has an HTTP service panel that calls `fetch` and displays the result.
 
 The default runtime bundle is checked in here:
 

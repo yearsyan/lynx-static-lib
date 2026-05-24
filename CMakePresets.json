@@ -46,6 +46,18 @@
       "targets": ["lynx_static_conan_upload"]
     },
     {
+      "name": "http-conan-create",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_http_conan_create"]
+    },
+    {
+      "name": "http-conan-upload",
+      "configurePreset": "windows",
+      "configuration": "Release",
+      "targets": ["lynx_http_conan_upload"]
+    },
+    {
       "name": "explorer",
       "configurePreset": "windows",
       "configuration": "Release",

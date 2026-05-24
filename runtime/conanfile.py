@@ -29,14 +29,34 @@ class LynxlibRuntimeConan(ConanFile):
             return Path(override).expanduser().resolve()
         return Path(self.source_folder).parent / "out" / "lynx" / "Default"
 
+    @staticmethod
+    def _find_asset(artifact_root: Path, name: str) -> Path:
+        candidates = [
+            artifact_root / name,
+            artifact_root / "lynx_core" / name,
+            artifact_root / "lynx_explorer" / name,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[0]
+
     def package(self) -> None:
         artifact_root = self._artifact_root()
         icu_data = artifact_root / "icudtl.dat"
         if not icu_data.exists():
             raise ConanException(f"Missing Lynx ICU data file: {icu_data}")
+        core_js = self._find_asset(artifact_root, "lynx_core.js")
+        if not core_js.exists():
+            raise ConanException(f"Missing Lynx core JS file: {core_js}")
+        core_dev_js = self._find_asset(artifact_root, "lynx_core_dev.js")
+        if not core_dev_js.exists():
+            raise ConanException(f"Missing Lynx core dev JS file: {core_dev_js}")
 
         package_root = Path(self.package_folder)
         copy(self, "icudtl.dat", src=str(artifact_root), dst=str(package_root / "res"), keep_path=False)
+        copy(self, "lynx_core.js", src=str(core_js.parent), dst=str(package_root / "res"), keep_path=False)
+        copy(self, "lynx_core_dev.js", src=str(core_dev_js.parent), dst=str(package_root / "res"), keep_path=False)
         copy(
             self,
             "lynxlib-runtime.cmake",

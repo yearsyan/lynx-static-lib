@@ -22,6 +22,8 @@ set(LYNXLIB_SYNC_SCRIPT
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/sync_lynx_deps.py")
 set(LYNXLIB_CONAN_SCRIPT
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_conan.py")
+set(LYNXLIB_HTTP_CONAN_SCRIPT
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/package_http_conan.py")
 
 set(LYNXLIB_CONAN_VERSION "0.1.4" CACHE STRING "Conan package version for lynxlib")
 set(LYNXLIB_CONAN_USER "neuyan" CACHE STRING "Conan package user for lynxlib")
@@ -93,6 +95,29 @@ add_custom_target(lynx_static_conan_upload
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
   COMMENT "Uploading lynx_static.lib Conan package to the configured remote")
+
+add_custom_target(lynx_http_conan_create
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_HTTP_CONAN_SCRIPT}"
+          --version "${LYNXLIB_CONAN_VERSION}"
+          --user "${LYNXLIB_CONAN_USER}"
+          --channel "${LYNXLIB_CONAN_CHANNEL}"
+          --remote "${LYNXLIB_CONAN_REMOTE}"
+  DEPENDS lynx_static_conan_export
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Creating the lynxlib-http Conan package")
+
+add_custom_target(lynx_http_conan_upload
+  COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_HTTP_CONAN_SCRIPT}"
+          --upload
+          --version "${LYNXLIB_CONAN_VERSION}"
+          --user "${LYNXLIB_CONAN_USER}"
+          --channel "${LYNXLIB_CONAN_CHANNEL}"
+          --remote "${LYNXLIB_CONAN_REMOTE}"
+  DEPENDS lynx_static_conan_export
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  USES_TERMINAL
+  COMMENT "Uploading the lynxlib-http Conan package to the configured remote")
 
 add_custom_target(lynx_all
   DEPENDS lynx_official_sdk lynx_static_archive lynx_explorer_demo)

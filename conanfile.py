@@ -57,6 +57,8 @@ class LynxlibConan(ConanFile):
         self.cpp_info.set_property("cmake_target_name", "lynxlib::lynxlib")
 
         self.cpp_info.libs = ["lynx_static"]
+        self.cpp_info.includedirs = ["include"]
+        self.cpp_info.libdirs = ["lib"]
         self.cpp_info.defines = ["LYNX_STATIC_LINK"]
         self.cpp_info.exelinkflags = ["/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ"]
         self.cpp_info.sharedlinkflags = ["/INCLUDE:?SetupWeakNodeApiEnv@napi@primjs@@YAXXZ"]

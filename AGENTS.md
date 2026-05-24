@@ -12,9 +12,8 @@ Use this file for build, packaging, and repo-operation details. Keep
 - Local compatibility patches live in `patches/lynx` and are applied after the
   official dependency sync.
 - Main wrapper scripts live in `scripts/`.
-- Build output is under `out/`, `build/`, and `demo/build/`; these are ignored.
-- The checked-in demo bundle artifact is
-  `demo/bundle/dist/main.lynx.bundle`.
+- Build output is under `out/`, `build/`, `demo/build/`, and
+  `demo/bundle/dist/`; these are ignored.
 
 ## Platform And Toolchain
 
@@ -170,6 +169,7 @@ python scripts/build_conan_demo.py
 Direct commands from `demo/`:
 
 ```powershell
+python ..\scripts\build_demo_bundle.py
 conan install . -pr:a profiles/windows-msvc-static -r neuyan --build=missing
 cmake --preset windows-release
 cmake --build --preset windows-release
@@ -180,6 +180,7 @@ Expected outputs:
 ```text
 demo/build/Release/lynx_static_demo.exe
 demo/build/Release/compile_commands.json
+demo/bundle/dist/main.lynx.bundle
 ```
 
 Verify the demo static link and smoke run:
@@ -189,10 +190,10 @@ python scripts/verify_demo.py
 ```
 
 The standalone demo consumes `lynxlib`, `lynxlib-runtime`, and `lynxlib-http`
-from Conan. It loads `demo/bundle/dist/main.lynx.bundle` and registers the curl
-HTTP service.
+from Conan. It loads the generated `demo/bundle/dist/main.lynx.bundle` and
+registers the curl HTTP service.
 
-Refresh the checked-in demo bundle only when needed:
+Build the generated demo bundle:
 
 ```powershell
 python scripts/build_demo_bundle.py
@@ -235,7 +236,6 @@ websocket connection URL.
 - Do not commit `out/`, `build/`, downloaded Habitat cache, local logs, or
   generated Lynx dependencies.
 - Commit wrapper files, `.gitmodules`, the submodule pointer, source changes,
-  patches, and intentional demo bundle updates.
-- `demo/bundle/dist/main.lynx.bundle` is intentionally tracked so the standalone
-  demo can build without the top-level Lynx checkout after packages exist.
+  and patches.
+- Do not commit generated demo bundles under `demo/bundle/dist/`.
 - Before editing, check `git status --short`; preserve unrelated user changes.

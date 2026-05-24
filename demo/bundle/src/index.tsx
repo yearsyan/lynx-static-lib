@@ -1,4 +1,4 @@
-import { root, useEffect, useState } from "@lynx-js/react";
+import { root, useEffect, useMainThreadRef, useState } from "@lynx-js/react";
 
 import "./styles.scss";
 
@@ -36,6 +36,29 @@ function describeError(error: unknown) {
 }
 
 function App() {
+  const mainThreadTapCount = useMainThreadRef(0);
+  const mainThreadPalettes = [
+    {
+      background: "#fff7ed",
+      border: "#f97316",
+      accent: "#fb923c",
+    },
+    {
+      background: "#ecfeff",
+      border: "#0891b2",
+      accent: "#06b6d4",
+    },
+    {
+      background: "#f0fdf4",
+      border: "#16a34a",
+      accent: "#22c55e",
+    },
+    {
+      background: "#fdf2f8",
+      border: "#db2777",
+      accent: "#ec4899",
+    },
+  ];
   const [http, setHttp] = useState<HttpState>({
     status: "idle",
     detail: "tap Fetch to request httpbin",
@@ -49,6 +72,10 @@ function App() {
   useEffect(() => {
     "background only";
     console.log("[lynxlib-demo] mount useEffect log only");
+    setProbe((current) => ({
+      ...current,
+      effect: "mounted in background thread",
+    }));
     setTimeout(() => {
       "background only";
       console.log("[lynxlib-demo] auto fetch timer fired");
@@ -91,6 +118,21 @@ function App() {
     startFetch("Fetch bindtap");
   }
 
+  function handleMainThreadColorTap(event: MainThread.ITouchEvent) {
+    "main thread";
+    const nextIndex = (mainThreadTapCount.current + 1) % mainThreadPalettes.length;
+    mainThreadTapCount.current = nextIndex;
+    const palette = mainThreadPalettes[nextIndex];
+    event.currentTarget.setStyleProperties({
+      "background-color": palette.background,
+      "border-color": palette.border,
+    });
+    const swatch = event.currentTarget.querySelector(".mainThreadSwatch");
+    if (swatch) {
+      swatch.setStyleProperty("background-color", palette.accent);
+    }
+  }
+
   return (
     <view className="page">
       <view className="hero">
@@ -114,6 +156,17 @@ function App() {
         <text className="sampleText">useEffect: {probe.effect}</text>
         <text className="sampleText">background tap: {probe.backgroundTap}</text>
         <text className="sampleText">auto fetch: {probe.autoFetch}</text>
+      </view>
+      <view
+        className="mainThreadPanel"
+        main-thread:bindtap={handleMainThreadColorTap}
+      >
+        <view className="mainThreadHeader">
+          <view className="mainThreadSwatch" />
+          <text className="sectionTitle">Main-thread tap</text>
+        </view>
+        <text className="sampleText">Tap updates this panel from the Lynx main thread.</text>
+        <text className="sampleText">event.currentTarget.setStyleProperties()</text>
       </view>
       <view className="grid">
         <view className="tile blue">

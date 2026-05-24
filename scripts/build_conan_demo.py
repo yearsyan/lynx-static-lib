@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--remote", default="neuyan")
     parser.add_argument("--build-type", default="Release")
     parser.add_argument("--configure-only", action="store_true")
+    parser.add_argument("--skip-bundle", action="store_true")
     return parser.parse_args()
 
 
@@ -87,6 +88,12 @@ def main() -> int:
     env = os.environ.copy()
     load_vcvars_environment(env)
     ensure_ninja_on_path(env)
+
+    bundle = demo_root / "bundle" / "dist" / "main.lynx.bundle"
+    if not args.skip_bundle:
+        run([sys.executable, REPO_ROOT / "scripts" / "build_demo_bundle.py"], cwd=REPO_ROOT, env=env)
+    elif not bundle.exists():
+        raise RuntimeError(f"Demo bundle not found: {bundle}")
 
     run(
         [

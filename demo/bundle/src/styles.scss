@@ -134,6 +134,34 @@
   row-gap: 10px;
 }
 
+.mainThreadPanel {
+  display: flex;
+  flex-direction: column;
+  background-color: #fff7ed;
+  border-width: 3px;
+  border-style: solid;
+  border-color: #f97316;
+  border-radius: 6px;
+  margin-left: 28px;
+  margin-right: 28px;
+  padding: 22px;
+  row-gap: 10px;
+}
+
+.mainThreadHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.mainThreadSwatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 17px;
+  background-color: #fb923c;
+}
+
 .sectionTitle {
   color: #111827;
   font-size: 18px;

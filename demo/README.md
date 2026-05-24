@@ -16,6 +16,7 @@ projects use the `prod` flavor by default.
 Install dependencies and configure from this directory:
 
 ```powershell
+python ..\scripts\build_demo_bundle.py
 conan install . -pr:a profiles/windows-msvc-static -r neuyan --build=missing
 cmake --preset windows-release
 cmake --build --preset windows-release
@@ -51,7 +52,7 @@ inside `lynx_static.lib`.
 It also registers `lynxlib::http::RegisterCurlHttpService()` on startup. The
 bundle has an HTTP service panel that calls `fetch` and displays the result.
 
-The default runtime bundle is checked in here:
+The runtime bundle is generated here:
 
 ```text
 demo/bundle/dist/main.lynx.bundle
@@ -64,8 +65,9 @@ demo/bundle/src/index.tsx
 ```
 
 Refreshing the bundle uses the official rspeedy packages synchronized under the
-top-level `third_party/lynx/node_modules`, but building this standalone demo
-does not require that tree once the Conan package and prebuilt bundle exist.
+top-level `third_party/lynx/node_modules`. The wrapper command
+`python scripts\build_conan_demo.py` builds the bundle before configuring the
+standalone demo.
 
 The official upstream Windows Explorer target is still available separately:
 

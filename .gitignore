@@ -14,7 +14,6 @@ CMakeUserPresets.json
 # Local demo bundle install/build output
 /demo/bundle/node_modules/
 /demo/bundle/dist/*
-!/demo/bundle/dist/main.lynx.bundle
 /demo/bundle/.rspeedy/
 /demo/build/
 

@@ -12,18 +12,14 @@ FORBIDDEN_PREFIXES = (
     "out",
     "third_party/_cache",
     "demo/bundle/node_modules",
+    "demo/bundle/dist",
     "demo/bundle/.rspeedy",
 )
 FORBIDDEN_BINARY = re.compile(r"\.(exe|dll|lib|obj|pdb|zip|dat|bundle)$", re.IGNORECASE)
-ALLOWED_BINARY_PATHS = {
-    "demo/bundle/dist/main.lynx.bundle",
-}
 
 
 def is_forbidden(path: str) -> bool:
     normalized = path.replace("\\", "/")
-    if normalized in ALLOWED_BINARY_PATHS:
-        return False
     for prefix in FORBIDDEN_PREFIXES:
         if normalized == prefix or normalized.startswith(prefix + "/"):
             return True

@@ -17,4 +17,4 @@ It includes:
 - a standalone Win32 demo under `demo/` that consumes the packages through
   Conan.
 
-Operational notes for coding agents live in [`agent.md`](agent.md).
+Operational notes for coding agents live in [`AGENTS.md`](AGENTS.md).

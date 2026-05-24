@@ -11,8 +11,9 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_LYNXLIB_REF = "lynxlib/0.1.4@neuyan/stable"
-DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.1.4@neuyan/stable"
+DEFAULT_LYNXLIB_REF = "lynxlib/0.2@neuyan/stable"
+DEFAULT_RUNTIME_REF = "lynxlib-runtime/0.2@neuyan/stable"
+DEFAULT_HTTP_REF = "lynxlib-http/0.2@neuyan/stable"
 DEFAULT_REMOTE = "neuyan"
 
 
@@ -216,6 +217,7 @@ def scaffold_config(project_name: str) -> dict:
             "remote": DEFAULT_REMOTE,
             "lynxlib": DEFAULT_LYNXLIB_REF,
             "runtime": DEFAULT_RUNTIME_REF,
+            "http": DEFAULT_HTTP_REF,
             "profile": "profiles/windows-msvc-static",
         },
         "bundle": {
@@ -263,6 +265,7 @@ include("${CMAKE_CURRENT_BINARY_DIR}/generated/project_options.cmake" OPTIONAL)
 
 find_package(lynxlib CONFIG REQUIRED)
 find_package(lynxlib_runtime CONFIG REQUIRED)
+find_package(lynxlib_http CONFIG REQUIRED)
 
 set(LYNX_PROJECT_SOURCES
   src/main.cpp)
@@ -283,6 +286,7 @@ target_include_directories(${LYNX_PROJECT_EXECUTABLE} PRIVATE
 set_property(TARGET ${LYNX_PROJECT_EXECUTABLE} PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib::lynxlib)
+target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib_http::lynxlib_http)
 
 if(MSVC)
   target_compile_options(${LYNX_PROJECT_EXECUTABLE} PRIVATE /EHsc)
@@ -332,6 +336,7 @@ MAIN_CPP_TEMPLATE = r"""
 #include "capi/lynx_view_capi.h"
 #include "generated_bundle.h"
 #include "generated_config.h"
+#include "lynxlib/http_service.h"
 
 namespace {
 
@@ -641,13 +646,17 @@ std::filesystem::path ParseBundlePathFromCommandLine() {
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
   EnablePerMonitorDpiAwareness();
+  lynxlib::http::RegisterCurlHttpService();
   LynxApp app(ParseBundlePathFromCommandLine());
   if (!app.Create(instance, show_command)) {
+    lynxlib::http::UnregisterCurlHttpService();
     MessageBoxW(nullptr, L"Failed to create the Lynx window.",
                 generated::kWindowTitle, MB_ICONERROR | MB_OK);
     return 1;
   }
-  return app.Run();
+  const int result = app.Run();
+  lynxlib::http::UnregisterCurlHttpService();
+  return result;
 }
 """
 
@@ -843,6 +852,7 @@ class GeneratedLynxProjectConan(ConanFile):
     def requirements(self) -> None:
         self.requires("@LYNXLIB_REF@")
         self.requires("@RUNTIME_REF@")
+        self.requires("@HTTP_REF@")
 
     def layout(self) -> None:
         cmake_layout(self)
@@ -894,6 +904,10 @@ Project behavior is controlled by `lynx_project.json`.
 Set `bundle.embed_main_bundle` to `true` to compile `bundle/dist/main.lynx.bundle`
 into `build/<build-type>/generated/generated_bundle.h`; set it to `false` to
 copy the bundle next to the executable under `resources/main.lynx.bundle`.
+
+The generated native entry point links `lynxlib-http` and registers
+`LynxHttpService`, so bundle code can call the standard `fetch()` API after the
+matching `lynxlib-http` Conan package is available.
 
 `compile_commands.copy_to_root` copies the CMake-generated compile database to
 `compile_commands.json` in the project root for clangd and editor integrations.
@@ -954,6 +968,7 @@ def create_project(args: argparse.Namespace) -> None:
         "VERSION": config["version"],
         "LYNXLIB_REF": config["conan"]["lynxlib"],
         "RUNTIME_REF": config["conan"]["runtime"],
+        "HTTP_REF": config["conan"]["http"],
     }
 
     write_json(project_dir / "lynx_project.json", config)
@@ -1148,6 +1163,7 @@ def generate_conanfile(project_dir: Path, config: dict) -> None:
         "VERSION": str(config.get("version") or "0.1.0"),
         "LYNXLIB_REF": str(conan.get("lynxlib") or DEFAULT_LYNXLIB_REF),
         "RUNTIME_REF": str(conan.get("runtime") or DEFAULT_RUNTIME_REF),
+        "HTTP_REF": str(conan.get("http") or DEFAULT_HTTP_REF),
     }
     write_text(project_dir / "conanfile.py", template_replace(CONANFILE_TEMPLATE, values))
 

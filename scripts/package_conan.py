@@ -12,7 +12,7 @@ from lynxlib_common import REPO_ROOT, copytree_replace, log, resolve_existing_pa
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Package and optionally upload lynxlib static artifacts with Conan.")
-    parser.add_argument("--version", default="0.1.4")
+    parser.add_argument("--version", default="0.2")
     parser.add_argument("--user", default="neuyan")
     parser.add_argument("--channel", default="stable")
     parser.add_argument("--remote", default="neuyan")

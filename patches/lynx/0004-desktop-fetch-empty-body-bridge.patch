@@ -1,0 +1,218 @@
+diff --git a/js_libraries/lynx-core/src/lynx/lynx.ts b/js_libraries/lynx-core/src/lynx/lynx.ts
+index fd3f3c1fb..c1b206eef 100644
+--- a/js_libraries/lynx-core/src/lynx/lynx.ts
++++ b/js_libraries/lynx-core/src/lynx/lynx.ts
+@@ -457,17 +457,31 @@ export class Lynx {
+       request.lynxExtension[
+         'enableFetchAPIStandardStreaming'
+       ] = enableFetchAPIStandardStreaming;
+-      const fetchArg = {
++      const headers: Record<string, string> = {};
++      request.headers.forEach((value, name) => {
++        headers[name] = value;
++      });
++      const fetchArg: Record<string, any> = {
+         method: request.method,
+         url: request.url,
+-        origin: this.getNativeApp().__pageUrl,
+-        headers: Object.fromEntries(request.headers.entries()),
+-        body: request._arrayBuffer,
+-        lynxExtension: request.lynxExtension,
++        headers,
+       };
++      const origin = this.getNativeApp().__pageUrl;
++      if (typeof origin === 'string') {
++        fetchArg.origin = origin;
++      }
++      if (
++        request._arrayBuffer instanceof ArrayBuffer &&
++        request._arrayBuffer.byteLength > 0
++      ) {
++        fetchArg.body = request._arrayBuffer;
++      }
+       const useStreaming =
+         request.lynxExtension['useStreaming'] ||
+         enableFetchAPIStandardStreaming;
++      if (useStreaming || enableFetchAPIStandardStreaming) {
++        fetchArg.lynxExtension = request.lynxExtension;
++      }
+       this.getApp().NativeModules.LynxFetchModule.fetch(
+         fetchArg,
+         (response: any) => {
+diff --git a/platform/embedder/module/lynx_fetch_module.cc b/platform/embedder/module/lynx_fetch_module.cc
+index f1821cd3c..917cbd6be 100644
+--- a/platform/embedder/module/lynx_fetch_module.cc
++++ b/platform/embedder/module/lynx_fetch_module.cc
+@@ -3,6 +3,10 @@
+ // LICENSE file in the root directory of this source tree.
+ #include "platform/embedder/module/lynx_fetch_module.h"
+ 
++#include <cstdarg>
++#include <cstdio>
++#include <cstdlib>
++#include <mutex>
+ #include <string>
+ #include <utility>
+ 
+@@ -17,6 +21,30 @@
+ 
+ namespace lynx {
+ namespace embedder {
++namespace {
++
++void TraceFetch(const char* format, ...) {
++  const char* path = std::getenv("LYNXLIB_FETCH_TRACE");
++  if (!path || path[0] == '\0') {
++    return;
++  }
++
++  static std::mutex trace_mutex;
++  std::lock_guard<std::mutex> lock(trace_mutex);
++  std::FILE* file = std::fopen(path, "ab");
++  if (!file) {
++    return;
++  }
++  std::fprintf(file, "[lynx-fetch-module] ");
++  va_list args;
++  va_start(args, format);
++  std::vfprintf(file, format, args);
++  va_end(args);
++  std::fputc('\n', file);
++  std::fclose(file);
++}
++
++}  // namespace
+ 
+ class FetchCallbackContext {
+  public:
+@@ -31,6 +59,8 @@ void InvokeJSCallback(Napi::Env env, Napi::Function func,
+                       FetchCallbackContext* context,
+                       lynx_http_response_t* response) {
+   LOGD("LynxFetchModule::InvokeJSCallback");
++  TraceFetch("InvokeJSCallback status=%d body=%zu", response->status_code,
++             response->body.length);
+   if (response->status_code <= 0) {
+     Napi::Object error = Napi::Object::New(env);
+     error.Set("code", response->status_code);
+@@ -81,34 +111,70 @@ void ThreadSafeFunctionFinalizer(Napi::Env env, void* finalizer_data,
+ 
+ Napi::Value Fetch(const Napi::CallbackInfo& info) {
+   Napi::Env env = info.Env();
++  TraceFetch("Fetch enter argc=%zu", info.Length());
++  if (info.Length() < 3 || !info[0].IsObject() || !info[1].IsFunction() ||
++      !info[2].IsFunction()) {
++    TraceFetch("Fetch invalid arguments");
++    return env.Undefined();
++  }
++
+   const auto& fetch_args = info[0].As<Napi::Object>();
+   const auto& resolve = info[1].As<Napi::Function>();
+   const auto& reject = info[2].As<Napi::Function>();
+ 
+   // Unwrap the url, method, headers, and body from the fetch args.
+-  std::string url = fetch_args["url"].As<Napi::String>();
+-  std::string method = fetch_args["method"].As<Napi::String>();
+-  Napi::Object headers = fetch_args["headers"].As<Napi::Object>();
+-  Napi::ArrayBuffer body = fetch_args["body"].As<Napi::ArrayBuffer>();
++  Napi::Value url_value = fetch_args["url"];
++  if (!url_value.IsString()) {
++    TraceFetch("Fetch invalid url");
++    Napi::Object error = Napi::Object::New(env);
++    error.Set("code", -1);
++    error.Set("message", "fetch url must be a string");
++    reject.Call({error});
++    return env.Undefined();
++  }
++  std::string url = url_value.As<Napi::String>();
++
++  std::string method = "GET";
++  Napi::Value method_value = fetch_args["method"];
++  if (method_value.IsString()) {
++    method = method_value.As<Napi::String>();
++  }
++
++  Napi::Value headers_value = fetch_args["headers"];
++  Napi::Object headers =
++      headers_value.IsObject() ? headers_value.As<Napi::Object>()
++                               : Napi::Object::New(env);
++
++  Napi::Value body_value = fetch_args["body"];
++  bool has_body = body_value.IsArrayBuffer();
++  TraceFetch("Fetch parsed url=%s method=%s headers_object=%d body_arraybuffer=%d",
++             url.c_str(), method.c_str(), headers_value.IsObject() ? 1 : 0,
++             has_body ? 1 : 0);
+ 
+   lynx_service_center_t* service_center = lynx_service_get_center_instance();
+   lynx_http_service_t* http_service = reinterpret_cast<lynx_http_service_t*>(
+       lynx_service_get_service(service_center, kServiceTypeHttp));
+   lynx_http_request_t* request = lynx_http_request_create(url);
+-  request->method = method.empty() ? "GET" : method.c_str();
++  request->method = method.empty() ? "GET" : method;
+   // Add headers to the request.
+   Napi::Array header_names = headers.GetPropertyNames();
+   for (uint32_t i = 0; i < header_names.Length(); i++) {
+     std::string header_name = header_names.Get(i).As<Napi::String>();
+-    std::string header_value =
+-        headers.Get(header_name.c_str()).As<Napi::String>();
+-    request->headers[header_name] = header_value;
++    Napi::Value header_value = headers.Get(header_name.c_str());
++    if (header_value.IsString()) {
++      request->headers[header_name] = header_value.As<Napi::String>();
++    }
+   }
+-  if (body.ByteLength() > 0) {
++  if (has_body) {
++    Napi::ArrayBuffer body = body_value.As<Napi::ArrayBuffer>();
+     // Assign the body data to the request.
+-    uint8_t* data = (uint8_t*)body.Data();
+-    request->body.assign(data, data + body.ByteLength());
++    if (body.ByteLength() > 0) {
++      uint8_t* data = (uint8_t*)body.Data();
++      request->body.assign(data, data + body.ByteLength());
++    }
+   }
++  TraceFetch("Fetch request ready service=%p header_count=%zu body=%zu",
++             http_service, request->headers.size(), request->body.size());
+   auto tsf = Napi::TypedThreadSafeFunction<
+       FetchCallbackContext, lynx_http_response_t,
+       InvokeJSCallback>::New(env, "", 10, 1,
+@@ -116,28 +182,38 @@ Napi::Value Fetch(const Napi::CallbackInfo& info) {
+                              ThreadSafeFunctionFinalizer);
+   lynx_http_response_t* response = lynx_http_response_create(
+       [tsf = std::move(tsf)](lynx_http_response_t* origin_response) mutable {
++        TraceFetch("Fetch response callback status=%d body=%zu",
++                   origin_response->status_code,
++                   origin_response->body.length);
+         // The origin response will be released after this callback, create a
+         // wrapped response to keep the content, should be released after js
+         // callback.
+         lynx_http_response_t* response = lynx_http_response_create(nullptr);
+         lynx_http_response_wrap(origin_response, response);
+-        if (tsf.NonBlockingCall(response) != napi_ok) {
++        napi_status status = tsf.NonBlockingCall(response);
++        TraceFetch("Fetch NonBlockingCall status=%d", status);
++        if (status != napi_ok) {
+           LOGW("LynxFetchModule::NonBlockingCall failed");
+           // Release response if tsf failed.
+           lynx_http_response_release(response);
+         }
+         tsf.Release();
+       });
++  TraceFetch("Fetch call service request");
+   lynx_http_service_request(http_service, request, response);
++  TraceFetch("Fetch leave");
+   return env.Undefined();
+ }
+ 
+ napi_value LynxFetchModuleCreator(napi_env c_env, napi_value c_exports,
+                                   const char* module_name, void* opaque) {
+   // Wrapper to C++.
++  TraceFetch("Creator module=%s env=%p exports=%p opaque=%p",
++             module_name ? module_name : "(null)", c_env, c_exports, opaque);
+   Napi::Env env = c_env;
+   Napi::Object exports(c_env, c_exports);
+   exports["fetch"] = Napi::Function::New(env, &Fetch, "fetch");
++  TraceFetch("Creator leave");
+   return c_exports;
+ }
+ 

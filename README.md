@@ -9,6 +9,7 @@ the upstream Windows GN/Ninja build.
 
 - `third_party/lynx`: official Lynx submodule pinned to `48546c5d0515ead65328d5f137a1d0860c06985f`
 - `scripts/sync_lynx_deps.py`: downloads pinned Habitat and runs Lynx dependency sync
+- `patches/lynx`: local compatibility patches applied to the official Lynx checkout after dependency sync
 - `scripts/build_lynx.py`: runs GN/Ninja and optionally creates `lynx_static.lib`
 - `scripts/package_conan.py`: exports and optionally uploads the static package to Conan
 - `scripts/package_http_conan.py`: builds and exports the optional libcurl HTTP service package
@@ -33,8 +34,9 @@ python scripts/invoke_cmake.py --preset windows
 python scripts/invoke_cmake.py --build --preset deps
 ```
 
-The dependency sync uses Habitat `0.3.147` from the official release URL and
-checks SHA256 before executing it.
+The dependency sync uses Habitat `0.3.147` from the official release URL,
+checks SHA256 before executing it, and then applies the local compatibility
+patches from `patches/lynx`.
 
 ## Windows Toolchain
 

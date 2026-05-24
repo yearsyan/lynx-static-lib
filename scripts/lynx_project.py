@@ -251,6 +251,13 @@ def scaffold_config(project_name: str) -> dict:
             "bundle_url": "http://{host}:{port}/main.lynx.bundle",
             "startup_timeout_s": 30,
         },
+        "devtool": {
+            "connect": True,
+            "host": "127.0.0.1",
+            "port": 19783,
+            "websocket_url": "ws://{host}:{port}/mdevices/page/android",
+            "room": "",
+        },
         "runtime": {
             "copy_icu": True,
         },
@@ -323,6 +330,7 @@ set_property(TARGET ${LYNX_PROJECT_EXECUTABLE} PROPERTY
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib::lynxlib)
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib_http::lynxlib_http)
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE CURL::libcurl)
+target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE iphlpapi)
 
 if(MSVC)
   target_compile_options(${LYNX_PROJECT_EXECUTABLE} PRIVATE /EHsc)
@@ -357,7 +365,9 @@ endif()
 
 
 MAIN_CPP_TEMPLATE = r"""
+#include <winsock2.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #include <shellapi.h>
 
 #include <curl/curl.h>
@@ -411,6 +421,7 @@ struct ClientSize {
 struct RuntimeOptions {
   std::filesystem::path bundle_path;
   std::string dev_url;
+  std::string devtool_url;
 };
 
 struct DownloadResult {
@@ -427,6 +438,35 @@ std::filesystem::path ExeDirectory() {
     return {};
   }
   return std::filesystem::path(buffer).parent_path();
+}
+
+std::string GetWindowsDnsServers() {
+  ULONG buffer_size = 0;
+  if (GetNetworkParams(nullptr, &buffer_size) != ERROR_BUFFER_OVERFLOW ||
+      buffer_size == 0) {
+    return {};
+  }
+
+  std::vector<uint8_t> buffer(buffer_size);
+  auto* fixed_info = reinterpret_cast<FIXED_INFO*>(buffer.data());
+  if (GetNetworkParams(fixed_info, &buffer_size) != NO_ERROR) {
+    return {};
+  }
+
+  std::string servers;
+  for (IP_ADDR_STRING* entry = &fixed_info->DnsServerList; entry;
+       entry = entry->Next) {
+    const char* address = entry->IpAddress.String;
+    if (!address || address[0] == '\0' ||
+        std::strcmp(address, "0.0.0.0") == 0) {
+      continue;
+    }
+    if (!servers.empty()) {
+      servers += ",";
+    }
+    servers += address;
+  }
+  return servers;
 }
 
 std::filesystem::path DefaultBundlePath() {
@@ -512,6 +552,11 @@ DownloadResult DownloadUrl(const std::string& url) {
   curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
   curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
+
+  const std::string dns_servers = GetWindowsDnsServers();
+  if (!dns_servers.empty()) {
+    curl_easy_setopt(easy, CURLOPT_DNS_SERVERS, dns_servers.c_str());
+  }
 
   const CURLcode code = curl_easy_perform(easy);
   curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status_code);
@@ -646,10 +691,22 @@ void EnablePerMonitorDpiAwareness() {
 }
 
 #if LYNX_PROJECT_ENABLE_DEVTOOL
-void ConfigureDevtool() {
+void ConfigureDevtool(const std::string& devtool_url) {
   lynx_env_set_devtool_app_info("App", generated::kProjectName);
+  lynx_env_set_devtool_app_info("AppProcessName", generated::kProjectName);
+  lynx_env_set_devtool_app_info("AppVersion", "1.0");
   lynx_env_set_devtool_app_info("Platform", "Windows");
+  lynx_env_set_devtool_app_info("osType", "Windows");
+  lynx_env_set_devtool_app_info("osVersion", "Windows");
+  lynx_env_set_devtool_app_info("deviceModel", "Windows");
+  const char* sdk_version = lynx_env_get_sdk_version();
+  if (sdk_version && sdk_version[0] != '\0') {
+    lynx_env_set_devtool_app_info("sdkVersion", sdk_version);
+  }
   lynx_env_enable_devtool(1);
+  if (!devtool_url.empty()) {
+    lynx_env_connect_devtool(devtool_url.c_str());
+  }
 }
 #endif
 
@@ -877,6 +934,19 @@ RuntimeOptions ParseRuntimeOptionsFromCommandLine() {
       options.dev_url = WideToUtf8(argument.c_str() + 6);
       continue;
     }
+    if ((argument == L"--devtool-url" || argument == L"--devtool-schema") &&
+        index + 1 < argc) {
+      options.devtool_url = WideToUtf8(argv[++index]);
+      continue;
+    }
+    if (argument.rfind(L"--devtool-url=", 0) == 0) {
+      options.devtool_url = WideToUtf8(argument.c_str() + 14);
+      continue;
+    }
+    if (argument.rfind(L"--devtool-schema=", 0) == 0) {
+      options.devtool_url = WideToUtf8(argument.c_str() + 17);
+      continue;
+    }
     if (!argument.empty() && argument[0] != L'-') {
       options.bundle_path = argument;
     }
@@ -891,11 +961,12 @@ RuntimeOptions ParseRuntimeOptionsFromCommandLine() {
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
   EnablePerMonitorDpiAwareness();
+  RuntimeOptions options = ParseRuntimeOptionsFromCommandLine();
 #if LYNX_PROJECT_ENABLE_DEVTOOL
-  ConfigureDevtool();
+  ConfigureDevtool(options.devtool_url);
 #endif
   lynxlib::http::RegisterCurlHttpService();
-  LynxApp app(ParseRuntimeOptionsFromCommandLine());
+  LynxApp app(std::move(options));
   if (!app.Create(instance, show_command)) {
     lynxlib::http::UnregisterCurlHttpService();
     MessageBoxW(nullptr, L"Failed to create the Lynx window.",
@@ -1178,7 +1249,10 @@ matching `lynxlib-http` Conan package is available.
 
 `python .\lynx_project.py dev .` builds the native shell, starts `rspeedy dev`,
 launches the executable with `--dev-url`, and lets Rspeedy HMR push bundle
-updates through Lynx's built-in `LynxWebSocketModule`.
+updates through Lynx's built-in `LynxWebSocketModule`. When `conan.flavor` is
+`dev`, it also connects the app to the debug router from `devtool.websocket_url`
+and `devtool.room`. Use `--devtool-url`, `--devtool-schema`, or
+`--devtool-room` to override those values for one run.
 
 `compile_commands.copy_to_root` copies the CMake-generated compile database to
 `compile_commands.json` in the project root for clangd and editor integrations.
@@ -1560,6 +1634,15 @@ def format_dev_url(template: str, host: str, port: int) -> str:
     return template.replace("{host}", host).replace("{port}", str(port))
 
 
+def format_devtool_schema(websocket_url: str, room: str) -> str:
+    if websocket_url.startswith("lynx://"):
+        return websocket_url
+    schema = f"lynx://remote_debug_lynx/enable?url={websocket_url}"
+    if room:
+        schema += f"&room={room}"
+    return schema
+
+
 def wait_for_dev_server(url: str, timeout_s: float, process: subprocess.Popen) -> None:
     deadline = time.monotonic() + timeout_s
     last_error = ""
@@ -1639,6 +1722,34 @@ def dev_project(args: argparse.Namespace) -> None:
     dev_url = format_dev_url(url_template, host, port)
     dev_command = dev.get("command") or bundle.get("dev_command") or ["pnpm", "run", "dev"]
 
+    flavor = str(config.get("conan", {}).get("flavor") or "prod").lower()
+    devtool_schema = ""
+    if not args.no_devtool:
+        devtool = config.get("devtool", {})
+        explicit_devtool = bool(args.devtool_schema or args.devtool_url)
+        connect_devtool = explicit_devtool or (
+            flavor == "dev" and bool(devtool.get("connect", True))
+        )
+        if connect_devtool:
+            if args.devtool_schema:
+                devtool_schema = args.devtool_schema
+            else:
+                devtool_host = args.devtool_host or str(devtool.get("host") or "127.0.0.1")
+                devtool_port = int(
+                    args.devtool_port
+                    if args.devtool_port is not None
+                    else devtool.get("port", 19783)
+                )
+                websocket_template = str(
+                    args.devtool_url
+                    or devtool.get("websocket_url")
+                    or devtool.get("url")
+                    or "ws://{host}:{port}/mdevices/page/android"
+                )
+                websocket_url = format_dev_url(websocket_template, devtool_host, devtool_port)
+                room = str(args.devtool_room if args.devtool_room is not None else devtool.get("room", ""))
+                devtool_schema = format_devtool_schema(websocket_url, room)
+
     env["LYNX_DEV_SERVER_HOST"] = host
     env["LYNX_DEV_SERVER_PORT"] = str(port)
 
@@ -1648,11 +1759,11 @@ def dev_project(args: argparse.Namespace) -> None:
         server_process = start_process([str(part) for part in dev_command], cwd=source_dir, env=env)
         wait_for_dev_server(dev_url, startup_timeout_s, server_process)
         log(f"Dev bundle: {dev_url}")
-        app_process = start_process(
-            [str(exe), "--dev-url", dev_url],
-            cwd=build_dir,
-            env=env,
-        )
+        app_command = [str(exe), "--dev-url", dev_url]
+        if devtool_schema:
+            log(f"Devtool bridge: {devtool_schema}")
+            app_command.extend(["--devtool-url", devtool_schema])
+        app_process = start_process(app_command, cwd=build_dir, env=env)
 
         while True:
             if app_process.poll() is not None:
@@ -1741,6 +1852,12 @@ def parse_args() -> argparse.Namespace:
     dev_parser.add_argument("--host")
     dev_parser.add_argument("--port", type=int)
     dev_parser.add_argument("--skip-build", action="store_true")
+    dev_parser.add_argument("--devtool-host")
+    dev_parser.add_argument("--devtool-port", type=int)
+    dev_parser.add_argument("--devtool-url", help="Debug router websocket URL, or a full lynx:// remote debug schema.")
+    dev_parser.add_argument("--devtool-schema", help="Full lynx://remote_debug_lynx/enable?... schema.")
+    dev_parser.add_argument("--devtool-room")
+    dev_parser.add_argument("--no-devtool", action="store_true", help="Do not connect the app to a debug router.")
 
     export_parser = subparsers.add_parser("export", help="Export an already built project.")
     export_parser.add_argument("project_dir", nargs="?", default=".")

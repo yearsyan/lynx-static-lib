@@ -1,0 +1,161 @@
+name: Windows static library
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Conan package version to export when the run is not tag-triggered"
+        required: false
+        default: "0.2.2"
+
+permissions:
+  contents: read
+
+jobs:
+  conan-static-library:
+    runs-on: windows-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Enable Git long paths
+        shell: pwsh
+        run: git config --global core.longpaths true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check committed files
+        shell: pwsh
+        run: python .\scripts\check_repository.py
+
+      - name: Ensure Windows LLVM toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          python .\scripts\ensure_windows_toolchain.py
+          if ($LASTEXITCODE -eq 0) {
+            exit 0
+          }
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe was not found; Visual Studio Build Tools are required."
+          }
+
+          $installPath = (& $vswhere -latest -products * -property installationPath).Trim()
+          if (-not $installPath) {
+            throw "Visual Studio 2022 installation was not found."
+          }
+
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          if (-not (Test-Path $installer)) {
+            throw "Visual Studio Installer was not found: $installer"
+          }
+
+          $arguments = @(
+            'modify',
+            '--installPath', $installPath,
+            '--add', 'Microsoft.VisualStudio.Component.VC.Llvm.Clang',
+            '--add', 'Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset',
+            '--quiet',
+            '--norestart'
+          )
+          $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Visual Studio Installer failed with exit code $($process.ExitCode)."
+          }
+
+          python .\scripts\ensure_windows_toolchain.py
+          if ($LASTEXITCODE -ne 0) {
+            throw "Visual Studio LLVM toolchain is still unavailable after installer repair."
+          }
+
+      - name: Install Conan
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          python -m pip install --upgrade pip conan
+          $conanScripts = @(
+            python -c "import sysconfig; print(sysconfig.get_path('scripts'))"
+            python -c "import sysconfig; print(sysconfig.get_path('scripts', scheme='nt_user'))"
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+          $env:PATH = "$($conanScripts -join ';');$env:PATH"
+          foreach ($dir in $conanScripts) {
+            Add-Content -Path $env:GITHUB_PATH -Value $dir
+          }
+          conan --version
+
+      - name: Configure CMake
+        shell: pwsh
+        run: python .\scripts\invoke_cmake.py --preset windows
+
+      - name: Sync official Lynx dependencies
+        shell: pwsh
+        run: python .\scripts\invoke_cmake.py --build --preset deps
+
+      - name: Build static library
+        shell: pwsh
+        run: python .\scripts\invoke_cmake.py --build --preset static
+
+      - name: Derive Conan package version
+        id: conan-version
+        shell: pwsh
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $version = $env:INPUT_VERSION
+          if ($env:REF -and $env:REF.StartsWith('refs/tags/')) {
+            $version = $env:REF_NAME -replace '^v', ''
+          }
+          if (-not $version) {
+            $version = '0.2.2'
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "LYNXLIB_CONAN_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Export local Conan package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          python .\scripts\package_conan.py `
+            --skip-build `
+            --force `
+            --library-only `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable
+
+      - name: Verify local Conan package
+        shell: pwsh
+        run: conan list "lynxlib/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
+
+      - name: Upload static library artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lynx-static-${{ steps.conan-version.outputs.version }}
+          path: |
+            out/lynx/Prod/lynx_static.lib
+            out/lynx/Prod/include/**
+            build/conan-package/artifacts/**
+          if-no-files-found: error
+          retention-days: 14

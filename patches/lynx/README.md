@@ -31,9 +31,7 @@ The patch keeps the public API behavior but makes the bridge tolerant:
 - the JS fetch wrapper builds headers without relying on `Object.fromEntries`;
 - empty request bodies are omitted instead of passing `ArrayBuffer(0)`;
 - streaming metadata is only forwarded when streaming is requested;
-- the Desktop C++ `LynxFetchModule` validates optional fields before casting;
-- an opt-in `LYNXLIB_FETCH_TRACE=<path>` file trace can be enabled while
-  debugging native fetch dispatch.
+- the Desktop C++ `LynxFetchModule` validates optional fields before casting.
 
 The libcurl implementation lives in `lynxlib-http`; this patch only makes sure
 standard `fetch()` reaches the registered `LynxHttpService`.

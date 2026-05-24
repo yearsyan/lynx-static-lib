@@ -7,7 +7,6 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -27,8 +26,6 @@ constexpr UINT kStatusMessage = WM_APP + 1;
 constexpr int kInitialWidth = 960;
 constexpr int kInitialHeight = 640;
 
-std::mutex g_log_mutex;
-
 struct ClientSize {
   int physical_width = 0;
   int physical_height = 0;
@@ -44,15 +41,6 @@ std::filesystem::path ExeDirectory() {
     return {};
   }
   return std::filesystem::path(buffer).parent_path();
-}
-
-void WriteTrace(const std::string& message) {
-  std::lock_guard<std::mutex> lock(g_log_mutex);
-  std::ofstream log(ExeDirectory() / L"lynx_static_demo_trace.log",
-                    std::ios::app);
-  if (log) {
-    log << "[lynx-static-demo] " << message << "\n";
-  }
 }
 
 std::filesystem::path DefaultBundlePath() {
@@ -191,7 +179,6 @@ class DemoApp {
                             rect.right - rect.left, rect.bottom - rect.top,
                             nullptr, nullptr, instance, this);
     if (!hwnd_) {
-      WriteTrace("window_create_failed");
       return false;
     }
     LogLifecycle("window_created");
@@ -466,8 +453,6 @@ class DemoApp {
   }
 
   void LogLifecycle(const std::string& message) {
-    WriteTrace(message);
-
     if (hwnd_) {
       auto title = std::make_unique<std::wstring>(
           std::wstring(L"Lynx static demo - ") + Utf8ToWide(message));
@@ -503,11 +488,8 @@ std::filesystem::path ParseBundlePathFromCommandLine() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int show_command) {
-  WriteTrace("process_start");
   EnablePerMonitorDpiAwareness();
-  WriteTrace("dpi_awareness_ready");
   lynxlib::http::RegisterCurlHttpService();
-  WriteTrace("http_service_registered");
   DemoApp app(ParseBundlePathFromCommandLine());
   if (!app.Create(instance, show_command)) {
     lynxlib::http::UnregisterCurlHttpService();

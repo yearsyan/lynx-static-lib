@@ -5,9 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
-#include <cstdarg>
-#include <cstdio>
-#include <cstdlib>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -40,27 +37,6 @@ namespace http {
 namespace {
 
 constexpr auto kSelectWakeInterval = std::chrono::milliseconds(10);
-
-void Trace(const char* format, ...) {
-  const char* path = std::getenv("LYNXLIB_HTTP_TRACE");
-  if (!path || path[0] == '\0') {
-    return;
-  }
-
-  static std::mutex trace_mutex;
-  std::lock_guard<std::mutex> lock(trace_mutex);
-  std::FILE* file = std::fopen(path, "ab");
-  if (!file) {
-    return;
-  }
-  std::fprintf(file, "[lynxlib-http] ");
-  va_list args;
-  va_start(args, format);
-  std::vfprintf(file, format, args);
-  va_end(args);
-  std::fputc('\n', file);
-  std::fclose(file);
-}
 
 void EnsureCurlGlobalInit() {
   static std::once_flag init_once;
@@ -151,7 +127,6 @@ void FreeResponseBody(uint8_t* content, size_t, void*) {
 
 void CompleteError(const std::shared_ptr<lynx::pub::LynxHttpResponse>& response,
                    int code, const std::string& message) {
-  Trace("complete error code=%d message=%s", code, message.c_str());
   if (!response) {
     return;
   }
@@ -191,11 +166,9 @@ class CurlMultiSocketDispatcher {
  public:
   explicit CurlMultiSocketDispatcher(CurlHttpServiceOptions options)
       : options_(options) {
-    Trace("dispatcher init");
     EnsureCurlGlobalInit();
     multi_ = curl_multi_init();
     if (!multi_) {
-      Trace("curl_multi_init failed");
       stopping_ = true;
       return;
     }
@@ -209,7 +182,6 @@ class CurlMultiSocketDispatcher {
   }
 
   ~CurlMultiSocketDispatcher() {
-    Trace("dispatcher shutdown");
     {
       std::lock_guard<std::mutex> lock(mutex_);
       stopping_ = true;
@@ -228,7 +200,6 @@ class CurlMultiSocketDispatcher {
     if (!job) {
       return;
     }
-    Trace("submit url=%s method=%s", job->url.c_str(), job->method.c_str());
 
     std::shared_ptr<lynx::pub::LynxHttpResponse> rejected_response;
     {
@@ -327,7 +298,6 @@ class CurlMultiSocketDispatcher {
   }
 
   void Run() {
-    Trace("worker run");
     if (!multi_) {
       FailPendingJobs("curl_multi_init failed");
       return;
@@ -367,7 +337,6 @@ class CurlMultiSocketDispatcher {
 
     FailPendingJobs("http service is stopped");
     FailActiveJobs("http service is stopped");
-    Trace("worker exit");
   }
 
   bool IsStopping() {
@@ -399,7 +368,6 @@ class CurlMultiSocketDispatcher {
   }
 
   void StartTransfer(std::unique_ptr<RequestJob> job) {
-    Trace("start transfer url=%s", job->url.c_str());
     auto context = std::make_unique<EasyContext>();
     context->job = std::move(job);
     context->max_response_bytes = options_.max_response_bytes;
@@ -412,7 +380,6 @@ class CurlMultiSocketDispatcher {
     CURL* easy = context->easy;
     std::string setup_error;
     if (!ConfigureEasyHandle(context.get(), &setup_error)) {
-      Trace("configure failed: %s", setup_error.c_str());
       curl_easy_cleanup(easy);
       context->easy = nullptr;
       CompleteError(context->job->response, -1, setup_error);
@@ -421,8 +388,6 @@ class CurlMultiSocketDispatcher {
 
     CURLMcode add_result = curl_multi_add_handle(multi_, easy);
     if (add_result != CURLM_OK) {
-      Trace("curl_multi_add_handle failed: %s",
-            curl_multi_strerror(add_result));
       curl_easy_cleanup(easy);
       context->easy = nullptr;
       CompleteError(context->job->response, -1, curl_multi_strerror(add_result));
@@ -430,7 +395,6 @@ class CurlMultiSocketDispatcher {
     }
 
     active_[easy] = std::move(context);
-    Trace("curl_multi_add_handle ok");
     TriggerTimeout();
     DrainCompleted();
   }
@@ -481,13 +445,8 @@ class CurlMultiSocketDispatcher {
 #ifdef _WIN32
     context->dns_servers = GetWindowsDnsServers();
     if (!context->dns_servers.empty()) {
-      Trace("using dns servers=%s", context->dns_servers.c_str());
-      CURLcode dns_result =
-          curl_easy_setopt(easy, CURLOPT_DNS_SERVERS, context->dns_servers.c_str());
-      if (dns_result != CURLE_OK) {
-        Trace("CURLOPT_DNS_SERVERS failed: %s",
-              curl_easy_strerror(dns_result));
-      }
+      (void)curl_easy_setopt(easy, CURLOPT_DNS_SERVERS,
+                             context->dns_servers.c_str());
     }
 #endif
 
@@ -586,8 +545,6 @@ class CurlMultiSocketDispatcher {
   }
 
   void UpdateSocket(curl_socket_t socket, int what) {
-    Trace("socket update socket=%llu what=%d",
-          static_cast<unsigned long long>(socket), what);
     if (what == CURL_POLL_REMOVE) {
       socket_actions_.erase(socket);
       return;
@@ -596,7 +553,6 @@ class CurlMultiSocketDispatcher {
   }
 
   void UpdateTimer(long timeout_ms) {
-    Trace("timer update timeout_ms=%ld", timeout_ms);
     if (timeout_ms < 0) {
       has_timeout_ = false;
       return;
@@ -716,9 +672,6 @@ class CurlMultiSocketDispatcher {
 
   void CompleteTransfer(std::unique_ptr<EasyContext> context, CURLcode result,
                         long response_code) {
-    Trace("complete transfer result=%d response_code=%ld body_bytes=%zu",
-          static_cast<int>(result), response_code,
-          context->response_body.size());
     auto response = context->job->response;
     if (context->response_too_large) {
       CompleteError(response, -static_cast<int>(CURLE_WRITE_ERROR),
@@ -799,12 +752,9 @@ class CurlHttpService final : public lynx::pub::LynxHttpService {
   void Request(std::shared_ptr<lynx::pub::LynxHttpRequest> request,
                std::shared_ptr<lynx::pub::LynxHttpResponse> response) override {
     if (!request || !response) {
-      Trace("request ignored: null request or response");
       return;
     }
 
-    Trace("request received url=%s method=%s", request->GetUrl().c_str(),
-          request->GetMethod().c_str());
     auto job = std::make_unique<RequestJob>();
     job->url = request->GetUrl();
     job->method = request->GetMethod();
@@ -836,7 +786,6 @@ void ReleaseServiceRegistration(const std::shared_ptr<CurlHttpService>& service)
 }  // namespace
 
 void RegisterCurlHttpService(const CurlHttpServiceOptions& options) {
-  Trace("register service");
   auto service = std::make_shared<CurlHttpService>(options);
   service->InitIfNeeded();
 
@@ -851,7 +800,6 @@ void RegisterCurlHttpService(const CurlHttpServiceOptions& options) {
 }
 
 void UnregisterCurlHttpService() {
-  Trace("unregister service");
   std::shared_ptr<CurlHttpService> service;
   {
     std::lock_guard<std::mutex> lock(g_service_mutex);

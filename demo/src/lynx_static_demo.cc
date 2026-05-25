@@ -259,6 +259,20 @@ class DemoApp {
     lynx_view_builder_set_frame(builder, 0.0f, 0.0f, size.logical_width,
                                 size.logical_height);
     lynx_view_builder_set_parent(builder, hwnd_);
+    lynxlib::http::CurlGenericResourceFetcherOptions fetcher_options;
+    fetcher_options.cache.policy =
+        lynxlib::http::ResourceCachePolicy::kMemory;
+    fetcher_options.cache.max_entries = 128;
+    fetcher_options.cache.max_bytes = 64 * 1024 * 1024;
+    fetcher_options.cache.ttl_ms = 5 * 60 * 1000;
+    generic_fetcher_ =
+        lynxlib::http::CreateCurlGenericResourceFetcher(fetcher_options);
+    if (generic_fetcher_) {
+      lynx_view_builder_set_generic_resource_fetcher(builder,
+                                                     generic_fetcher_);
+    } else {
+      LogLifecycle("generic_resource_fetcher unavailable");
+    }
 
     const std::filesystem::path icu_path = ExeDirectory() / L"icudtl.dat";
     if (std::filesystem::exists(icu_path)) {
@@ -345,6 +359,10 @@ class DemoApp {
     if (runtime_observer_) {
       lynx_runtime_lifecycle_observer_release(runtime_observer_);
       runtime_observer_ = nullptr;
+    }
+    if (generic_fetcher_) {
+      lynxlib::http::ReleaseCurlGenericResourceFetcher(generic_fetcher_);
+      generic_fetcher_ = nullptr;
     }
     child_content_ = nullptr;
   }
@@ -469,6 +487,7 @@ class DemoApp {
   lynx_view_t* lynx_view_ = nullptr;
   lynx_view_client_t* view_client_ = nullptr;
   lynx_runtime_lifecycle_observer_t* runtime_observer_ = nullptr;
+  lynx_generic_resource_fetcher_t* generic_fetcher_ = nullptr;
   std::filesystem::path bundle_path_;
 };
 

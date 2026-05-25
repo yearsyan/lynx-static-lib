@@ -298,8 +298,6 @@ include("${CMAKE_CURRENT_BINARY_DIR}/generated/project_options.cmake" OPTIONAL)
 find_package(lynxlib CONFIG REQUIRED)
 find_package(lynxlib_runtime CONFIG REQUIRED)
 find_package(lynxlib_http CONFIG REQUIRED)
-find_package(CURL CONFIG REQUIRED)
-find_path(LYNX_PROJECT_CURL_INCLUDE_DIR NAMES curl/curl.h REQUIRED)
 
 set(LYNX_PROJECT_SOURCES
   src/main.cpp)
@@ -323,14 +321,11 @@ else()
     LYNX_PROJECT_ENABLE_DEVTOOL=0)
 endif()
 target_include_directories(${LYNX_PROJECT_EXECUTABLE} PRIVATE
-  "${LYNX_PROJECT_GENERATED_DIR}"
-  "${LYNX_PROJECT_CURL_INCLUDE_DIR}")
+  "${LYNX_PROJECT_GENERATED_DIR}")
 set_property(TARGET ${LYNX_PROJECT_EXECUTABLE} PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib::lynxlib)
 target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE lynxlib_http::lynxlib_http)
-target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE CURL::libcurl)
-target_link_libraries(${LYNX_PROJECT_EXECUTABLE} PRIVATE iphlpapi)
 
 if(MSVC)
   target_compile_options(${LYNX_PROJECT_EXECUTABLE} PRIVATE /EHsc)
@@ -367,10 +362,7 @@ endif()
 MAIN_CPP_TEMPLATE = r"""
 #include <winsock2.h>
 #include <windows.h>
-#include <iphlpapi.h>
 #include <shellapi.h>
-
-#include <curl/curl.h>
 
 #include <cstdint>
 #include <cwchar>
@@ -378,11 +370,7 @@ MAIN_CPP_TEMPLATE = r"""
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <limits>
-#include <mutex>
-#include <new>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -394,9 +382,6 @@ MAIN_CPP_TEMPLATE = r"""
 #include "capi/lynx_env_capi.h"
 #endif
 #include "capi/lynx_load_meta_capi.h"
-#include "capi/lynx_generic_resource_fetcher_capi.h"
-#include "capi/lynx_resource_request_capi.h"
-#include "capi/lynx_resource_response_capi.h"
 #include "capi/lynx_template_data_capi.h"
 #include "capi/lynx_view_builder_capi.h"
 #include "capi/lynx_view_capi.h"
@@ -408,7 +393,6 @@ namespace {
 
 constexpr int kInitialWidth = 960;
 constexpr int kInitialHeight = 640;
-constexpr size_t kMaxResourceBytes = 64 * 1024 * 1024;
 
 struct ClientSize {
   int physical_width = 0;
@@ -424,13 +408,6 @@ struct RuntimeOptions {
   std::string devtool_url;
 };
 
-struct DownloadResult {
-  bool ok = false;
-  long status_code = 0;
-  std::string error;
-  std::vector<uint8_t> body;
-};
-
 std::filesystem::path ExeDirectory() {
   wchar_t buffer[MAX_PATH] = {};
   const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
@@ -438,35 +415,6 @@ std::filesystem::path ExeDirectory() {
     return {};
   }
   return std::filesystem::path(buffer).parent_path();
-}
-
-std::string GetWindowsDnsServers() {
-  ULONG buffer_size = 0;
-  if (GetNetworkParams(nullptr, &buffer_size) != ERROR_BUFFER_OVERFLOW ||
-      buffer_size == 0) {
-    return {};
-  }
-
-  std::vector<uint8_t> buffer(buffer_size);
-  auto* fixed_info = reinterpret_cast<FIXED_INFO*>(buffer.data());
-  if (GetNetworkParams(fixed_info, &buffer_size) != NO_ERROR) {
-    return {};
-  }
-
-  std::string servers;
-  for (IP_ADDR_STRING* entry = &fixed_info->DnsServerList; entry;
-       entry = entry->Next) {
-    const char* address = entry->IpAddress.String;
-    if (!address || address[0] == '\0' ||
-        std::strcmp(address, "0.0.0.0") == 0) {
-      continue;
-    }
-    if (!servers.empty()) {
-      servers += ",";
-    }
-    servers += address;
-  }
-  return servers;
 }
 
 std::filesystem::path DefaultBundlePath() {
@@ -494,131 +442,6 @@ std::string ToUtf8(const std::filesystem::path& path) {
 
 void FreeTemplateBytes(uint8_t* data, size_t, void*) {
   std::free(data);
-}
-
-void FreeResourceBytes(uint8_t* data, size_t, void*) {
-  delete[] data;
-}
-
-void EnsureCurlGlobalInit() {
-  static std::once_flag init_once;
-  std::call_once(init_once, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-
-bool IsHttpUrl(const std::string& url) {
-  return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
-}
-
-size_t CurlWriteCallback(char* contents, size_t size, size_t nmemb,
-                         void* user_data) {
-  auto* result = static_cast<DownloadResult*>(user_data);
-  if (nmemb != 0 && size > std::numeric_limits<size_t>::max() / nmemb) {
-    result->error = "response body is too large";
-    return 0;
-  }
-  const size_t byte_count = size * nmemb;
-  if (byte_count == 0) {
-    return 0;
-  }
-  if (result->body.size() > kMaxResourceBytes ||
-      byte_count > kMaxResourceBytes - result->body.size()) {
-    result->error = "response body exceeds 64 MiB";
-    return 0;
-  }
-  const auto* bytes = reinterpret_cast<const uint8_t*>(contents);
-  result->body.insert(result->body.end(), bytes, bytes + byte_count);
-  return byte_count;
-}
-
-DownloadResult DownloadUrl(const std::string& url) {
-  EnsureCurlGlobalInit();
-  DownloadResult result;
-  CURL* easy = curl_easy_init();
-  if (!easy) {
-    result.error = "curl_easy_init failed";
-    return result;
-  }
-
-  char error_buffer[CURL_ERROR_SIZE] = {};
-  curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
-  curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &CurlWriteCallback);
-  curl_easy_setopt(easy, CURLOPT_WRITEDATA, &result);
-  curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, error_buffer);
-  curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(easy, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(easy, CURLOPT_MAXREDIRS, 5L);
-  curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, 5000L);
-  curl_easy_setopt(easy, CURLOPT_TIMEOUT_MS, 15000L);
-  curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
-  curl_easy_setopt(easy, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
-  curl_easy_setopt(easy, CURLOPT_ACCEPT_ENCODING, "");
-
-  const std::string dns_servers = GetWindowsDnsServers();
-  if (!dns_servers.empty()) {
-    curl_easy_setopt(easy, CURLOPT_DNS_SERVERS, dns_servers.c_str());
-  }
-
-  const CURLcode code = curl_easy_perform(easy);
-  curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &result.status_code);
-  curl_easy_cleanup(easy);
-
-  if (code != CURLE_OK) {
-    result.error = error_buffer[0] ? error_buffer : curl_easy_strerror(code);
-    return result;
-  }
-  if (result.status_code >= 400) {
-    result.error = "HTTP " + std::to_string(result.status_code);
-    return result;
-  }
-  result.ok = true;
-  return result;
-}
-
-void CompleteResourceError(lynx_resource_response_t* response,
-                           const std::string& message) {
-  lynx_resource_response_set_code(response, -1);
-  lynx_resource_response_set_error_message(response, message.c_str());
-  lynx_resource_response_callback(response);
-  lynx_resource_response_release(response);
-}
-
-void CompleteResourceData(lynx_resource_response_t* response,
-                          const std::vector<uint8_t>& body) {
-  lynx_resource_response_set_code(response, 0);
-  if (!body.empty()) {
-    auto* bytes = new (std::nothrow) uint8_t[body.size()];
-    if (!bytes) {
-      CompleteResourceError(response, "out of memory while copying resource");
-      return;
-    }
-    std::memcpy(bytes, body.data(), body.size());
-    lynx_resource_response_set_data(response, bytes, body.size(),
-                                    &FreeResourceBytes, nullptr);
-  }
-  lynx_resource_response_callback(response);
-  lynx_resource_response_release(response);
-}
-
-void FetchResource(lynx_generic_resource_fetcher_t*,
-                   lynx_resource_request_t* request,
-                   lynx_resource_response_t* response) {
-  const char* raw_url = lynx_resource_request_get_url(request);
-  std::string url = raw_url ? raw_url : "";
-  lynx_resource_request_release(request);
-
-  std::thread([url = std::move(url), response]() {
-    if (!IsHttpUrl(url)) {
-      CompleteResourceError(response, "only http and https resources are supported");
-      return;
-    }
-    DownloadResult result = DownloadUrl(url);
-    if (!result.ok) {
-      CompleteResourceError(response, result.error.empty() ? "resource fetch failed"
-                                                           : result.error);
-      return;
-    }
-    CompleteResourceData(response, result.body);
-  }).detach();
 }
 
 float DpiScaleForWindow(HWND hwnd) {
@@ -804,12 +627,18 @@ class LynxApp {
     lynx_view_builder_set_frame(builder, 0.0f, 0.0f, size.logical_width,
                                 size.logical_height);
     lynx_view_builder_set_parent(builder, hwnd_);
-    generic_fetcher_ = lynx_generic_resource_fetcher_create(this);
-    lynx_generic_resource_fetcher_bind_fetch_resource(generic_fetcher_,
-                                                      &FetchResource);
-    lynx_generic_resource_fetcher_bind_fetch_resource_path(generic_fetcher_,
-                                                           &FetchResource);
-    lynx_view_builder_set_generic_resource_fetcher(builder, generic_fetcher_);
+    lynxlib::http::CurlGenericResourceFetcherOptions fetcher_options;
+    fetcher_options.cache.policy =
+        lynxlib::http::ResourceCachePolicy::kMemory;
+    fetcher_options.cache.max_entries = 128;
+    fetcher_options.cache.max_bytes = 64 * 1024 * 1024;
+    fetcher_options.cache.ttl_ms = 5 * 60 * 1000;
+    generic_fetcher_ =
+        lynxlib::http::CreateCurlGenericResourceFetcher(fetcher_options);
+    if (generic_fetcher_) {
+      lynx_view_builder_set_generic_resource_fetcher(builder,
+                                                     generic_fetcher_);
+    }
 
     const std::filesystem::path icu_path = ExeDirectory() / L"icudtl.dat";
     if (std::filesystem::exists(icu_path)) {
@@ -888,7 +717,7 @@ class LynxApp {
       lynx_view_ = nullptr;
     }
     if (generic_fetcher_) {
-      lynx_generic_resource_fetcher_release(generic_fetcher_);
+      lynxlib::http::ReleaseCurlGenericResourceFetcher(generic_fetcher_);
       generic_fetcher_ = nullptr;
     }
   }

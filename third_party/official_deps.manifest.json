@@ -1,8 +1,8 @@
 {
   "lynx": {
     "submodule_path": "third_party/lynx",
-    "url": "https://github.com/lynx-family/lynx.git",
-    "commit": "48546c5d0515ead65328d5f137a1d0860c06985f"
+    "url": "https://github.com/yearsyan/lynx.git",
+    "commit": "be149ef61d24796346ef000fa93166f44b4d386c"
   },
   "habitat": {
     "version": "0.3.147",

@@ -18,6 +18,8 @@
 struct lynx_http_request_t;
 struct lynx_http_response_t;
 struct lynx_http_service_t;
+struct lynx_resource_request_t;
+struct lynx_resource_response_t;
 struct lynx_service_center_t;
 
 enum lynx_service_type_e {
@@ -27,6 +29,14 @@ enum lynx_service_type_e {
 };
 
 using HttpResponseCallback = std::function<void(lynx_http_response_t*)>;
+
+struct ResourceCallbackState {
+  std::mutex* mutex = nullptr;
+  std::condition_variable* cv = nullptr;
+  bool* done = nullptr;
+  int* status_code = nullptr;
+  std::string* body = nullptr;
+};
 
 struct lynx_http_response_t {
   std::string url;
@@ -51,6 +61,18 @@ lynx_http_response_t* lynx_http_response_create(HttpResponseCallback callback);
 extern "C" {
 lynx_service_center_t* lynx_service_get_center_instance();
 void* lynx_service_get_service(lynx_service_center_t*, lynx_service_type_e type);
+lynx_resource_request_t* lynx_resource_request_create(const char* url,
+                                                      int type);
+lynx_resource_response_t* lynx_resource_response_create(
+    void (*callback)(lynx_resource_response_t*, void*), void* user_data);
+void lynx_generic_resource_fetcher_fetch_resource(
+    lynx_generic_resource_fetcher_t*, lynx_resource_request_t*,
+    lynx_resource_response_t*);
+int lynx_resource_response_get_code(lynx_resource_response_t* response);
+const uint8_t* lynx_resource_response_get_data(
+    lynx_resource_response_t* response);
+size_t lynx_resource_response_get_data_length(
+    lynx_resource_response_t* response);
 }
 
 void lynx_http_service_request(lynx_http_service_t* http_service,
@@ -150,7 +172,8 @@ class LoopbackHttpServer {
 
 int main() {
   WinsockSession winsock;
-  LoopbackHttpServer server;
+  LoopbackHttpServer service_server;
+  LoopbackHttpServer resource_server;
 
   std::mutex mutex;
   std::condition_variable cv;
@@ -166,7 +189,8 @@ int main() {
     return 1;
   }
 
-  lynx_http_request_t* request = lynx_http_request_create(server.url());
+  lynx_http_request_t* request =
+      lynx_http_request_create(service_server.url());
   lynx_http_response_t* response =
       lynx_http_response_create([&](lynx_http_response_t* response) {
         std::lock_guard<std::mutex> lock(mutex);
@@ -194,6 +218,55 @@ int main() {
   }
   if (body.find("\"source\":\"lynxlib-http\"") == std::string::npos) {
     return 4;
+  }
+
+  done = false;
+  status_code = 0;
+  body.clear();
+
+  lynxlib::http::CurlGenericResourceFetcherOptions fetcher_options;
+  fetcher_options.cache.policy = lynxlib::http::ResourceCachePolicy::kMemory;
+  auto* fetcher =
+      lynxlib::http::CreateCurlGenericResourceFetcher(fetcher_options);
+  if (!fetcher) {
+    return 5;
+  }
+
+  auto* resource_request = lynx_resource_request_create(
+      resource_server.url().c_str(), 0);
+  ResourceCallbackState resource_state{&mutex, &cv, &done, &status_code,
+                                       &body};
+  auto* resource_response = lynx_resource_response_create(
+      [](lynx_resource_response_t* response, void* user_data) {
+        auto* state = static_cast<ResourceCallbackState*>(user_data);
+        std::lock_guard<std::mutex> lock(*state->mutex);
+        *state->status_code = lynx_resource_response_get_code(response);
+        const uint8_t* data = lynx_resource_response_get_data(response);
+        const size_t length = lynx_resource_response_get_data_length(response);
+        if (data && length > 0) {
+          state->body->assign(reinterpret_cast<const char*>(data), length);
+        }
+        *state->done = true;
+        state->cv->notify_one();
+      },
+      &resource_state);
+  lynx_generic_resource_fetcher_fetch_resource(fetcher, resource_request,
+                                               resource_response);
+
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    if (!cv.wait_for(lock, std::chrono::seconds(10), [&]() { return done; })) {
+      lynxlib::http::ReleaseCurlGenericResourceFetcher(fetcher);
+      return 6;
+    }
+  }
+  lynxlib::http::ReleaseCurlGenericResourceFetcher(fetcher);
+
+  if (status_code != 0) {
+    return 7;
+  }
+  if (body.find("\"source\":\"lynxlib-http\"") == std::string::npos) {
+    return 8;
   }
   return 0;
 }

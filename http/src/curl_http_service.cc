@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <functional>
+#include <list>
 #include <limits>
 #include <map>
 #include <memory>
@@ -29,6 +31,9 @@
 #endif
 
 #include "capi/lynx_http_service_capi.h"
+#include "capi/lynx_generic_resource_fetcher_capi.h"
+#include "capi/lynx_resource_request_capi.h"
+#include "capi/lynx_resource_response_capi.h"
 #include "capi/lynx_service_center_capi.h"
 #include "lynx_http_service.h"
 
@@ -125,14 +130,50 @@ void FreeResponseBody(uint8_t* content, size_t, void*) {
   delete[] content;
 }
 
-void CompleteError(const std::shared_ptr<lynx::pub::LynxHttpResponse>& response,
-                   int code, const std::string& message) {
+void FreeResourceBody(uint8_t* content, size_t, void*) {
+  delete[] content;
+}
+
+struct RequestResult {
+  int error_code = 0;
+  long status_code = 0;
+  std::string status_text;
+  std::unordered_map<std::string, std::string> headers;
+  std::vector<uint8_t> body;
+  std::string error_message;
+};
+
+using RequestCompletion = std::function<void(RequestResult&&)>;
+
+void CompleteResourceError(lynx_resource_response_t* response,
+                           const std::string& message) {
   if (!response) {
     return;
   }
-  response->SetStatusCode(code);
-  response->SetStatusText(message.c_str());
-  response->Complete();
+  lynx_resource_response_set_code(response, -1);
+  lynx_resource_response_set_error_message(response, message.c_str());
+  lynx_resource_response_callback(response);
+  lynx_resource_response_release(response);
+}
+
+void CompleteResourceData(lynx_resource_response_t* response,
+                          const std::vector<uint8_t>& body) {
+  if (!response) {
+    return;
+  }
+  lynx_resource_response_set_code(response, 0);
+  if (!body.empty()) {
+    auto* bytes = new (std::nothrow) uint8_t[body.size()];
+    if (!bytes) {
+      CompleteResourceError(response, "out of memory while copying resource");
+      return;
+    }
+    std::memcpy(bytes, body.data(), body.size());
+    lynx_resource_response_set_data(response, bytes, body.size(),
+                                    &FreeResourceBody, nullptr);
+  }
+  lynx_resource_response_callback(response);
+  lynx_resource_response_release(response);
 }
 
 struct RequestJob {
@@ -140,8 +181,22 @@ struct RequestJob {
   std::string method;
   std::unordered_map<std::string, std::string> headers;
   std::vector<uint8_t> body;
-  std::shared_ptr<lynx::pub::LynxHttpResponse> response;
+  RequestCompletion complete;
 };
+
+void CompleteJob(std::unique_ptr<RequestJob> job, RequestResult result) {
+  if (job && job->complete) {
+    job->complete(std::move(result));
+  }
+}
+
+void CompleteJobError(std::unique_ptr<RequestJob> job, int code,
+                      const std::string& message) {
+  RequestResult result;
+  result.error_code = code;
+  result.error_message = message;
+  CompleteJob(std::move(job), std::move(result));
+}
 
 struct EasyContext {
   ~EasyContext() {
@@ -201,18 +256,19 @@ class CurlMultiSocketDispatcher {
       return;
     }
 
-    std::shared_ptr<lynx::pub::LynxHttpResponse> rejected_response;
+    bool rejected = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       if (stopping_) {
-        rejected_response = job->response;
+        rejected = true;
       } else {
         pending_.push_back(std::move(job));
       }
     }
-    if (rejected_response) {
-      CompleteError(rejected_response, -1,
-                    multi_ ? "http service is stopped" : "curl_multi_init failed");
+    if (rejected) {
+      CompleteJobError(std::move(job), -1,
+                       multi_ ? "http service is stopped"
+                              : "curl_multi_init failed");
       return;
     }
     cv_.notify_one();
@@ -373,7 +429,7 @@ class CurlMultiSocketDispatcher {
     context->max_response_bytes = options_.max_response_bytes;
     context->easy = curl_easy_init();
     if (!context->easy) {
-      CompleteError(context->job->response, -1, "curl_easy_init failed");
+      CompleteJobError(std::move(context->job), -1, "curl_easy_init failed");
       return;
     }
 
@@ -382,7 +438,7 @@ class CurlMultiSocketDispatcher {
     if (!ConfigureEasyHandle(context.get(), &setup_error)) {
       curl_easy_cleanup(easy);
       context->easy = nullptr;
-      CompleteError(context->job->response, -1, setup_error);
+      CompleteJobError(std::move(context->job), -1, setup_error);
       return;
     }
 
@@ -390,7 +446,8 @@ class CurlMultiSocketDispatcher {
     if (add_result != CURLM_OK) {
       curl_easy_cleanup(easy);
       context->easy = nullptr;
-      CompleteError(context->job->response, -1, curl_multi_strerror(add_result));
+      CompleteJobError(std::move(context->job), -1,
+                       curl_multi_strerror(add_result));
       return;
     }
 
@@ -672,10 +729,10 @@ class CurlMultiSocketDispatcher {
 
   void CompleteTransfer(std::unique_ptr<EasyContext> context, CURLcode result,
                         long response_code) {
-    auto response = context->job->response;
     if (context->response_too_large) {
-      CompleteError(response, -static_cast<int>(CURLE_WRITE_ERROR),
-                    "response body exceeds max_response_bytes");
+      CompleteJobError(std::move(context->job),
+                       -static_cast<int>(CURLE_WRITE_ERROR),
+                       "response body exceeds max_response_bytes");
       return;
     }
 
@@ -683,27 +740,17 @@ class CurlMultiSocketDispatcher {
       std::string message = context->error_buffer[0]
                                 ? context->error_buffer
                                 : curl_easy_strerror(result);
-      CompleteError(response, -static_cast<int>(result), message);
+      CompleteJobError(std::move(context->job), -static_cast<int>(result),
+                       message);
       return;
     }
 
-    response->SetStatusCode(static_cast<int>(response_code));
-    response->SetStatusText(context->status_text.c_str());
-    for (const auto& header : context->response_headers) {
-      response->AddHeader(header.first, header.second);
-    }
-
-    if (!context->response_body.empty()) {
-      const size_t length = context->response_body.size();
-      auto* body = new (std::nothrow) uint8_t[length];
-      if (!body) {
-        CompleteError(response, -1, "out of memory while copying response body");
-        return;
-      }
-      std::memcpy(body, context->response_body.data(), length);
-      response->SetBody(body, length, FreeResponseBody, nullptr);
-    }
-    response->Complete();
+    RequestResult request_result;
+    request_result.status_code = response_code;
+    request_result.status_text = std::move(context->status_text);
+    request_result.headers = std::move(context->response_headers);
+    request_result.body = std::move(context->response_body);
+    CompleteJob(std::move(context->job), std::move(request_result));
   }
 
   void FailPendingJobs(const std::string& message) {
@@ -713,7 +760,7 @@ class CurlMultiSocketDispatcher {
       jobs.swap(pending_);
     }
     for (auto& job : jobs) {
-      CompleteError(job->response, -1, message);
+      CompleteJobError(std::move(job), -1, message);
     }
   }
 
@@ -724,7 +771,7 @@ class CurlMultiSocketDispatcher {
       curl_multi_remove_handle(multi_, easy);
       curl_easy_cleanup(easy);
       context->easy = nullptr;
-      CompleteError(context->job->response, -1, message);
+      CompleteJobError(std::move(context->job), -1, message);
     }
     active_.clear();
     socket_actions_.clear();
@@ -747,7 +794,7 @@ class CurlMultiSocketDispatcher {
 class CurlHttpService final : public lynx::pub::LynxHttpService {
  public:
   explicit CurlHttpService(CurlHttpServiceOptions options)
-      : dispatcher_(options) {}
+      : dispatcher_(std::make_shared<CurlMultiSocketDispatcher>(options)) {}
 
   void Request(std::shared_ptr<lynx::pub::LynxHttpRequest> request,
                std::shared_ptr<lynx::pub::LynxHttpResponse> response) override {
@@ -760,13 +807,230 @@ class CurlHttpService final : public lynx::pub::LynxHttpService {
     job->method = request->GetMethod();
     job->headers = request->GetHeaders();
     job->body = request->GetBody();
-    job->response = std::move(response);
-    dispatcher_.Submit(std::move(job));
+    job->complete =
+        [response = std::move(response)](RequestResult&& result) {
+          if (!response) {
+            return;
+          }
+          if (result.error_code != 0) {
+            response->SetStatusCode(result.error_code);
+            response->SetStatusText(result.error_message.c_str());
+            response->Complete();
+            return;
+          }
+
+          response->SetStatusCode(static_cast<int>(result.status_code));
+          response->SetStatusText(result.status_text.c_str());
+          for (const auto& header : result.headers) {
+            response->AddHeader(header.first, header.second);
+          }
+          if (!result.body.empty()) {
+            const size_t length = result.body.size();
+            auto* body = new (std::nothrow) uint8_t[length];
+            if (!body) {
+              response->SetStatusCode(-1);
+              response->SetStatusText(
+                  "out of memory while copying response body");
+              response->Complete();
+              return;
+            }
+            std::memcpy(body, result.body.data(), length);
+            response->SetBody(body, length, FreeResponseBody, nullptr);
+          }
+          response->Complete();
+        };
+    dispatcher_->Submit(std::move(job));
+  }
+
+  std::shared_ptr<CurlMultiSocketDispatcher> dispatcher() const {
+    return dispatcher_;
   }
 
  private:
-  CurlMultiSocketDispatcher dispatcher_;
+  std::shared_ptr<CurlMultiSocketDispatcher> dispatcher_;
 };
+
+bool IsHttpUrl(const std::string& url) {
+  return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+}
+
+class ResourceFetcherState {
+ public:
+  ResourceFetcherState(std::shared_ptr<CurlMultiSocketDispatcher> dispatcher,
+                       ResourceCacheOptions cache_options)
+      : dispatcher_(std::move(dispatcher)),
+        cache_options_(std::move(cache_options)) {}
+
+  void Fetch(std::shared_ptr<ResourceFetcherState> self,
+             lynx_resource_request_t* request,
+             lynx_resource_response_t* response) {
+    const char* raw_url = request ? lynx_resource_request_get_url(request) : nullptr;
+    std::string url = raw_url ? raw_url : "";
+    if (request) {
+      lynx_resource_request_release(request);
+    }
+
+    if (!response) {
+      return;
+    }
+    if (!IsHttpUrl(url)) {
+      CompleteResourceError(response,
+                            "only http and https resources are supported");
+      return;
+    }
+
+    std::vector<uint8_t> cached_body;
+    if (TryGetCachedBody(url, &cached_body)) {
+      CompleteResourceData(response, cached_body);
+      return;
+    }
+
+    if (!dispatcher_) {
+      CompleteResourceError(response, "resource fetcher is not initialized");
+      return;
+    }
+
+    auto job = std::make_unique<RequestJob>();
+    job->url = url;
+    job->method = "GET";
+    job->complete =
+        [self = std::move(self), url = std::move(url), response](
+            RequestResult&& result) {
+          if (result.error_code != 0) {
+            CompleteResourceError(
+                response, result.error_message.empty() ? "resource fetch failed"
+                                                       : result.error_message);
+            return;
+          }
+
+          if (result.status_code >= 400) {
+            CompleteResourceError(
+                response, "HTTP " + std::to_string(result.status_code));
+            return;
+          }
+
+          if (self) {
+            self->PutCachedBody(url, result.body);
+          }
+          CompleteResourceData(response, result.body);
+        };
+    dispatcher_->Submit(std::move(job));
+  }
+
+ private:
+  struct CacheEntry {
+    std::vector<uint8_t> body;
+    std::chrono::steady_clock::time_point expires_at;
+    std::list<std::string>::iterator lru;
+  };
+
+  bool CacheEnabled() const {
+    return cache_options_.policy == ResourceCachePolicy::kMemory &&
+           cache_options_.max_entries > 0 && cache_options_.max_bytes > 0;
+  }
+
+  bool IsExpired(const CacheEntry& entry,
+                 std::chrono::steady_clock::time_point now) const {
+    return entry.expires_at != std::chrono::steady_clock::time_point::max() &&
+           now >= entry.expires_at;
+  }
+
+  bool TryGetCachedBody(const std::string& url, std::vector<uint8_t>* body) {
+    if (!CacheEnabled()) {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    auto it = cache_.find(url);
+    if (it == cache_.end()) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (IsExpired(it->second, now)) {
+      EraseCacheEntry(it);
+      return false;
+    }
+
+    cache_lru_.splice(cache_lru_.begin(), cache_lru_, it->second.lru);
+    *body = it->second.body;
+    return true;
+  }
+
+  void PutCachedBody(const std::string& url, const std::vector<uint8_t>& body) {
+    if (!CacheEnabled() || url.empty() || body.empty() ||
+        body.size() > cache_options_.max_bytes) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    auto existing = cache_.find(url);
+    if (existing != cache_.end()) {
+      EraseCacheEntry(existing);
+    }
+
+    while (!cache_.empty() &&
+           (cache_.size() >= cache_options_.max_entries ||
+            cache_bytes_ + body.size() > cache_options_.max_bytes)) {
+      auto lru_url = cache_lru_.back();
+      auto it = cache_.find(lru_url);
+      if (it == cache_.end()) {
+        cache_lru_.pop_back();
+      } else {
+        EraseCacheEntry(it);
+      }
+    }
+
+    CacheEntry entry;
+    entry.body = body;
+    entry.expires_at = std::chrono::steady_clock::time_point::max();
+    if (cache_options_.ttl_ms > 0) {
+      entry.expires_at = std::chrono::steady_clock::now() +
+                         std::chrono::milliseconds(cache_options_.ttl_ms);
+    }
+    cache_lru_.push_front(url);
+    entry.lru = cache_lru_.begin();
+    cache_bytes_ += entry.body.size();
+    cache_.emplace(url, std::move(entry));
+  }
+
+  void EraseCacheEntry(
+      std::unordered_map<std::string, CacheEntry>::iterator it) {
+    cache_bytes_ -= it->second.body.size();
+    cache_lru_.erase(it->second.lru);
+    cache_.erase(it);
+  }
+
+  std::shared_ptr<CurlMultiSocketDispatcher> dispatcher_;
+  ResourceCacheOptions cache_options_;
+  std::mutex cache_mutex_;
+  std::unordered_map<std::string, CacheEntry> cache_;
+  std::list<std::string> cache_lru_;
+  std::size_t cache_bytes_ = 0;
+};
+
+using ResourceFetcherStateHolder = std::shared_ptr<ResourceFetcherState>;
+
+void ResourceFetcherFinalizer(lynx_generic_resource_fetcher_t*, void* user_data) {
+  delete static_cast<ResourceFetcherStateHolder*>(user_data);
+}
+
+void ResourceFetcherFetchResource(lynx_generic_resource_fetcher_t* fetcher,
+                                  lynx_resource_request_t* request,
+                                  lynx_resource_response_t* response) {
+  auto* holder = fetcher ? static_cast<ResourceFetcherStateHolder*>(
+                              lynx_generic_resource_fetcher_get_user_data(fetcher))
+                         : nullptr;
+  ResourceFetcherStateHolder state = holder ? *holder : nullptr;
+  if (!state) {
+    if (request) {
+      lynx_resource_request_release(request);
+    }
+    CompleteResourceError(response, "resource fetcher is not initialized");
+    return;
+  }
+  state->Fetch(state, request, response);
+}
 
 std::mutex g_service_mutex;
 std::shared_ptr<CurlHttpService> g_service;
@@ -781,6 +1045,17 @@ void ReleaseServiceRegistration(const std::shared_ptr<CurlHttpService>& service)
   lynx_service_unregister_service(lynx_service_get_center_instance(),
                                   kServiceTypeHttp, http_service);
   lynx_http_service_release(http_service);
+}
+
+std::shared_ptr<CurlMultiSocketDispatcher> ResolveResourceDispatcher(
+    const CurlGenericResourceFetcherOptions& options) {
+  if (options.share_registered_http_service) {
+    std::lock_guard<std::mutex> lock(g_service_mutex);
+    if (g_service) {
+      return g_service->dispatcher();
+    }
+  }
+  return std::make_shared<CurlMultiSocketDispatcher>(options.http);
 }
 
 }  // namespace
@@ -809,6 +1084,37 @@ void UnregisterCurlHttpService() {
   ReleaseServiceRegistration(service);
 }
 
+lynx_generic_resource_fetcher_t* CreateCurlGenericResourceFetcher(
+    const CurlGenericResourceFetcherOptions& options) {
+  auto dispatcher = ResolveResourceDispatcher(options);
+  auto state = std::make_shared<ResourceFetcherState>(std::move(dispatcher),
+                                                     options.cache);
+  auto* holder = new (std::nothrow) ResourceFetcherStateHolder(std::move(state));
+  if (!holder) {
+    return nullptr;
+  }
+
+  lynx_generic_resource_fetcher_t* fetcher =
+      lynx_generic_resource_fetcher_create_with_finalizer(
+          holder, &ResourceFetcherFinalizer);
+  if (!fetcher) {
+    delete holder;
+    return nullptr;
+  }
+  lynx_generic_resource_fetcher_bind_fetch_resource(
+      fetcher, &ResourceFetcherFetchResource);
+  lynx_generic_resource_fetcher_bind_fetch_resource_path(
+      fetcher, &ResourceFetcherFetchResource);
+  return fetcher;
+}
+
+void ReleaseCurlGenericResourceFetcher(
+    lynx_generic_resource_fetcher_t* fetcher) {
+  if (fetcher) {
+    lynx_generic_resource_fetcher_release(fetcher);
+  }
+}
+
 }  // namespace http
 }  // namespace lynxlib
 
@@ -818,4 +1124,25 @@ extern "C" void lynxlib_http_register_default_service() {
 
 extern "C" void lynxlib_http_unregister_service() {
   lynxlib::http::UnregisterCurlHttpService();
+}
+
+extern "C" lynx_generic_resource_fetcher_t*
+lynxlib_http_create_default_generic_resource_fetcher() {
+  return lynxlib::http::CreateCurlGenericResourceFetcher();
+}
+
+extern "C" lynx_generic_resource_fetcher_t*
+lynxlib_http_create_memory_cached_generic_resource_fetcher(
+    std::size_t max_entries, std::size_t max_bytes, long ttl_ms) {
+  lynxlib::http::CurlGenericResourceFetcherOptions options;
+  options.cache.policy = lynxlib::http::ResourceCachePolicy::kMemory;
+  options.cache.max_entries = max_entries;
+  options.cache.max_bytes = max_bytes;
+  options.cache.ttl_ms = ttl_ms;
+  return lynxlib::http::CreateCurlGenericResourceFetcher(options);
+}
+
+extern "C" void lynxlib_http_release_generic_resource_fetcher(
+    lynx_generic_resource_fetcher_t* fetcher) {
+  lynxlib::http::ReleaseCurlGenericResourceFetcher(fetcher);
 }

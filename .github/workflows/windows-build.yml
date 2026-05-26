@@ -124,9 +124,13 @@ jobs:
         shell: pwsh
         run: python .\scripts\invoke_cmake.py --build --preset deps
 
-      - name: Build static library
+      - name: Build static libraries
         shell: pwsh
-        run: python .\scripts\invoke_cmake.py --build --preset static
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          python .\scripts\invoke_cmake.py --build --preset static-prod
+          python .\scripts\invoke_cmake.py --build --preset static-dev
 
       - name: Derive Conan package version
         id: conan-version
@@ -149,7 +153,7 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "LYNXLIB_CONAN_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Export local Conan package
+      - name: Export local Conan packages
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -157,14 +161,42 @@ jobs:
           python .\scripts\package_conan.py `
             --skip-build `
             --force `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --flavor prod `
+            --out-dir .\out\lynx\Prod
+
+          python .\scripts\package_conan.py `
+            --skip-build `
+            --force `
             --library-only `
             --version $env:LYNXLIB_CONAN_VERSION `
             --user neuyan `
-            --channel stable
+            --channel stable `
+            --flavor dev `
+            --out-dir .\out\lynx\Dev
 
-      - name: Verify local Conan package
+          python .\scripts\package_http_conan.py `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --lynxlib-flavor prod
+
+          python .\scripts\package_http_conan.py `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --lynxlib-flavor dev
+
+      - name: Verify local Conan packages
         shell: pwsh
-        run: conan list "lynxlib/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          conan list "lynxlib/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
+          conan list "lynxlib-runtime/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
+          conan list "lynxlib-http/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*"
 
       - name: Configure private Conan remote
         id: conan-remote
@@ -224,7 +256,7 @@ jobs:
           "LYNXLIB_CONAN_REMOTE=$remoteName" | Out-File -FilePath $env:GITHUB_ENV -Append
           "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Upload private Conan package
+      - name: Upload private Conan packages
         if: steps.conan-remote.outputs.enabled == 'true'
         shell: pwsh
         env:
@@ -239,11 +271,57 @@ jobs:
             --skip-build `
             --upload `
             --force `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --remote $env:LYNXLIB_CONAN_REMOTE `
+            --flavor prod `
+            --out-dir .\out\lynx\Prod
+
+          python .\scripts\package_conan.py `
+            --skip-build `
+            --upload `
+            --force `
             --library-only `
             --version $env:LYNXLIB_CONAN_VERSION `
             --user neuyan `
             --channel stable `
-            --remote $env:LYNXLIB_CONAN_REMOTE
+            --remote $env:LYNXLIB_CONAN_REMOTE `
+            --flavor dev `
+            --out-dir .\out\lynx\Dev
+
+          python .\scripts\package_http_conan.py `
+            --upload `
+            --force `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --remote $env:LYNXLIB_CONAN_REMOTE `
+            --lynxlib-flavor prod
+
+          python .\scripts\package_http_conan.py `
+            --upload `
+            --force `
+            --version $env:LYNXLIB_CONAN_VERSION `
+            --user neuyan `
+            --channel stable `
+            --remote $env:LYNXLIB_CONAN_REMOTE `
+            --lynxlib-flavor dev
+
+      - name: Verify uploaded Conan packages
+        if: steps.conan-remote.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          HTTPS_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          HTTP_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          ALL_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
+          NO_PROXY: ${{ vars.CONAN_NO_PROXY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          conan list "lynxlib/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*" -r $env:LYNXLIB_CONAN_REMOTE
+          conan list "lynxlib-runtime/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*" -r $env:LYNXLIB_CONAN_REMOTE
+          conan list "lynxlib-http/${env:LYNXLIB_CONAN_VERSION}@neuyan/stable:*" -r $env:LYNXLIB_CONAN_REMOTE
 
       - name: Upload static library artifact
         uses: actions/upload-artifact@v4

@@ -107,11 +107,10 @@ add_custom_target(lynx_static_conan_export
           --remote "${LYNXLIB_CONAN_REMOTE}"
           --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
           --flavor "${LYNXLIB_BUILD_FLAVOR}"
-          --library-only
   DEPENDS lynx_static_archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
-  COMMENT "Exporting lynx_static.lib as a local Conan package")
+  COMMENT "Exporting lynx_static.lib and runtime assets as local Conan packages")
 
 add_custom_target(lynx_static_conan_upload
   COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_CONAN_SCRIPT}"
@@ -123,11 +122,10 @@ add_custom_target(lynx_static_conan_upload
           --remote "${LYNXLIB_CONAN_REMOTE}"
           --out-dir "${LYNXLIB_LYNX_OUT_DIR}"
           --flavor "${LYNXLIB_BUILD_FLAVOR}"
-          --library-only
   DEPENDS lynx_static_archive
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   USES_TERMINAL
-  COMMENT "Uploading lynx_static.lib Conan package to the configured remote")
+  COMMENT "Uploading lynx_static.lib and runtime Conan packages to the configured remote")
 
 add_custom_target(lynx_http_conan_create
   COMMAND "${Python3_EXECUTABLE}" "${LYNXLIB_HTTP_CONAN_SCRIPT}"

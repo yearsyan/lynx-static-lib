@@ -464,6 +464,9 @@ class CurlMultiSocketDispatcher {
                        "CURLOPT_URL", setup_error) ||
         !CheckCurlCode(curl_easy_setopt(easy, CURLOPT_PRIVATE, context),
                        "CURLOPT_PRIVATE", setup_error) ||
+        !CheckCurlCode(curl_easy_setopt(easy, CURLOPT_NOPROXY,
+                                        "localhost,127.0.0.1,::1"),
+                       "CURLOPT_NOPROXY", setup_error) ||
         !CheckCurlCode(curl_easy_setopt(easy, CURLOPT_WRITEDATA, context),
                        "CURLOPT_WRITEDATA", setup_error) ||
         !CheckCurlCode(curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION,

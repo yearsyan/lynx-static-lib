@@ -263,7 +263,7 @@ jobs:
           HTTPS_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
           HTTP_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
           ALL_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
-          NO_PROXY: ${{ vars.CONAN_NO_PROXY }}
+          NO_PROXY: localhost,127.0.0.1,::1,${{ vars.CONAN_NO_PROXY }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -315,7 +315,7 @@ jobs:
           HTTPS_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
           HTTP_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
           ALL_PROXY: ${{ secrets.CONAN_HTTPS_PROXY }}
-          NO_PROXY: ${{ vars.CONAN_NO_PROXY }}
+          NO_PROXY: localhost,127.0.0.1,::1,${{ vars.CONAN_NO_PROXY }}
         run: |
           $ErrorActionPreference = 'Stop'
 

@@ -55,7 +55,12 @@ class LynxlibHttpConan(ConanFile):
     }
 
     def requirements(self) -> None:
-        self.requires(os.environ.get("LYNXLIB_HTTP_LYNXLIB_REF", "lynxlib/0.2.2@neuyan/stable"))
+        lynxlib_ref = os.environ.get("LYNXLIB_HTTP_LYNXLIB_REF")
+        if not lynxlib_ref:
+            user = self.user or "neuyan"
+            channel = self.channel or "stable"
+            lynxlib_ref = f"lynxlib/{self.version}@{user}/{channel}"
+        self.requires(lynxlib_ref)
         self.requires(os.environ.get("LYNXLIB_HTTP_LIBCURL_REF", "libcurl/8.20.0"))
 
     def validate(self) -> None:
